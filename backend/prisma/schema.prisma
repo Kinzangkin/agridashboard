@@ -1,0 +1,50 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider             = "prisma-client-py"
+  recursive_type_depth = 5
+}
+
+model Plant {
+  id             String          @id @default(uuid())
+  name           String          @default("Kebun A - Tomat")
+  status         String          @default("SEHAT")
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  sensorReadings SensorReading[]
+  predictions    Prediction[]
+}
+
+model SensorReading {
+  id          String   @id @default(uuid())
+  plantId     String
+  temperature Float    // Suhu dari DHT22
+  humidity    Float    // Kelembapan udara dari DHT22
+  soilMoisture Float?  // Opsional jika ada sensor tanah
+  createdAt   DateTime @default(now())
+  plant       Plant    @relation(fields: [plantId], references: [id])
+}
+
+model Prediction {
+  id             String   @id @default(uuid())
+  plantId        String
+  imageUrl       String   // URL gambar di Supabase Storage
+  diseaseLabel   String   // Hasil klasifikasi (SEHAT, EARLY_BLIGHT, dll)
+  confidence     Float    // Probabilitas (0-100)
+  needsReview    Boolean  @default(false) // True jika confidence < 90%
+  humanReviewed  Boolean  @default(false) // True jika sudah direview manusia
+  groundTruth    String?  // Label perbaikan jika ML salah
+  createdAt      DateTime @default(now())
+  plant          Plant    @relation(fields: [plantId], references: [id])
+}
+
+model Alert {
+  id          String   @id @default(uuid())
+  title       String
+  message     String
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+}
