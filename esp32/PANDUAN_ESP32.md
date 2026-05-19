@@ -121,51 +121,51 @@ Jika berhasil, Serial Monitor akan menampilkan:
 ✅ Response (200): {"success":true,"message":"Data sensor berhasil disimpan",...}
 ```
 
-## 5. API Endpoint Reference
+## 5. Setup ESP32-CAM (Deteksi Penyakit)
 
-### POST `/api/sensor` — Kirim Data Sensor
-**Request (JSON):**
-```json
-{
-  "temperature": 28.5,
-  "humidity": 65.0,
-  "soilMoisture": 45.0
-}
-```
+Jika Anda menggunakan ESP32-CAM untuk mengambil gambar daun dan mengirimnya ke AI, ikuti langkah ini:
 
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Data sensor berhasil disimpan",
-  "data": {
-    "id": "uuid-here",
-    "temperature": 28.5,
-    "humidity": 65.0,
-    "soilMoisture": 45.0,
-    "plantId": "default-plant-uuid",
-    "createdAt": "2026-05-06T23:00:00"
-  },
-  "alerts": []
-}
-```
+### a. Wiring ESP32-CAM
+Gunakan **FTDI Adapter** untuk memprogram ESP32-CAM:
+| FTDI | ESP32-CAM |
+|---|---|
+| 5V | 5V |
+| GND | GND |
+| TX | RX |
+| RX | TX |
+| GPIO 0 | GND (Hanya saat upload program) |
 
-### GET `/api/sensor` — Ambil Data Sensor
-```
-GET http://localhost:8000/api/sensor?limit=50
-```
+### b. Konfigurasi Kode
+Buka file `cam_wifi.ino` dan sesuaikan `WIFI_SSID`, `WIFI_PASSWORD`, dan `SERVER_URL`.
 
-### GET `/api/alerts` — Ambil Alert
-```
-GET http://localhost:8000/api/alerts?limit=20
-```
+### c. Cara Upload
+1. Pasang jumper antara **GPIO 0** dan **GND**.
+2. Klik **Upload** di Arduino IDE.
+3. Setelah selesai, **lepas jumper GPIO 0** dan tekan tombol **Reset** pada ESP32-CAM.
 
-## 6. Troubleshooting
+---
+
+## 6. API Endpoint Reference
+
+### POST `/api/sensor` — Kirim Data Sensor (JSON)
+Digunakan oleh ESP32 biasa (`sensor_wifi.ino`).
+**Request:** `{"temperature": 28.5, "humidity": 65.0, "soilMoisture": 2100}`
+
+### POST `/api/upload` — Kirim Gambar + Data (Multipart)
+Digunakan oleh ESP32-CAM (`cam_wifi.ino`).
+**Request (Multipart):**
+- `temperature`: float
+- `humidity`: float
+- `image`: file (binary)
+
+---
+
+## 7. Troubleshooting
 
 | Masalah | Solusi |
 |---|---|
 | `WiFi tidak terhubung` | Cek SSID & password. Pastikan ESP32 dalam jangkauan WiFi. |
 | `Error mengirim data (-1)` | Cek IP komputer sudah benar. Pastikan backend pakai `--host 0.0.0.0`. |
 | `Gagal membaca DHT11` | Cek wiring. Coba tambahkan resistor pull-up 10kΩ antara DATA dan VCC. |
-| `Soil Moisture selalu 0 atau 100` | Kalibrasi ulang nilai `map()` di kode. Cek pin 34 terhubung ke AO. |
+| `Camera init failed` | Cek apakah pinout sudah sesuai (AI-THINKER). Pastikan tegangan 5V stabil. |
 | `Connection refused` | Firewall mungkin memblokir port 8000. Matikan firewall sementara untuk test. |

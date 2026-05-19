@@ -269,7 +269,7 @@ async def get_sensor_readings(limit: int = 50):
 # GET Alerts (untuk Frontend)
 # ============================================================
 @app.get("/api/alerts")
-async def get_alerts(limit: int = 20):
+async def get_alerts(limit: int = 50):
     """Ambil alert terbaru."""
     alerts = await db.alert.find_many(
         take=limit,

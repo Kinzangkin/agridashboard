@@ -181,15 +181,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="glass rounded-[24px] p-5 flex flex-col justify-between border border-white/60 hover:bg-white/40 transition-colors">
-          <div className="flex items-center gap-2 text-slate-600 text-sm font-medium">
-            <Wind size={16} /> Status Kipas
-          </div>
-          <div className="flex justify-between items-end mt-4">
-            <div className="text-2xl font-bold text-slate-800">{latestReading && latestReading.temperature > 30 ? "ON" : "OFF"}</div>
-            <div className="w-6 h-6 rounded-full bg-white/50 flex items-center justify-center"><ArrowUpRight size={12} className="text-slate-600" /></div>
-          </div>
-        </div>
 
         <div className="glass rounded-[24px] p-5 flex flex-col justify-between border border-white/60 hover:bg-white/40 transition-colors">
           <div className="flex items-center gap-2 text-slate-600 text-sm font-medium">
