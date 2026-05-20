@@ -1,0 +1,29 @@
+# --- Python / Backend ---
+backend/venv/
+backend/.env
+backend/__pycache__/
+backend/static/tomato-images/*
+!backend/static/tomato-images/.gitkeep
+*.pyc
+*.pyo
+*.pyd
+
+# --- Node / Frontend ---
+frontend/node_modules/
+frontend/.next/
+frontend/.env
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+
+# --- Database ---
+*.db
+*.sqlite
+*.sqlite-journal
+
+# --- IDE / System ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

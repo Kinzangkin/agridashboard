@@ -1,5 +1,6 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from pydantic import BaseModel
 from typing import Optional
@@ -16,6 +17,26 @@ from prisma import Prisma
 # Prisma Client (Database)
 # ============================================================
 db = Prisma()
+
+def run_webcam_uploader_in_background():
+    """Menjalankan webcam uploader secara otomatis di background thread."""
+    import threading
+    
+    def thread_loop():
+        import time
+        # Beri waktu uvicorn untuk siap me-listen port 8000
+        time.sleep(4)
+        try:
+            from webcam_uploader import start_webcam_uploader
+            start_webcam_uploader()
+        except ImportError:
+            print("\n[INFO] OpenCV (opencv-python) atau requests belum terinstal di venv.")
+            print("[INFO] Jalankan 'pip install opencv-python requests' untuk mengaktifkan uploader webcam otomatis!\n")
+        except Exception as e:
+            print(f"\n[WARNING] Gagal menjalankan background webcam uploader: {e}\n")
+
+    t = threading.Thread(target=thread_loop, daemon=True)
+    t.start()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -34,6 +55,9 @@ async def lifespan(app: FastAPI):
         )
         print("[OK] Default plant created.")
 
+    # Jalankan webcam uploader secara otomatis di latar belakang
+    run_webcam_uploader_in_background()
+
     yield
 
     await db.disconnect()
@@ -48,6 +72,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Tentukan direktori penyimpanan gambar statis lokal
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+os.makedirs(os.path.join(STATIC_DIR, "tomato-images"), exist_ok=True)
+
+# Mount folder /static agar bisa diakses oleh browser/frontend
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # ============================================================
 # Pydantic Models untuk request dari ESP32
@@ -102,6 +133,11 @@ LABEL_MAP = {
 # Tentukan apakah label termasuk kategori "sakit"
 DISEASE_LABELS = {
     "SEHAT": False,
+    "SEHAT (KONDISI OPTIMAL)": False,
+    "SEHAT (POTENSI DEHIDRASI / SUHU TINGGI)": False,
+    "SEHAT (KELEMBAPAN TINGGI / RAWAN JAMUR)": False,
+    "SEHAT (SUHU DINGIN / PERTUMBUHAN LAMBAT)": False,
+    "TIDAK TERDETEKSI DAUN HIJAU": False,
     "BACTERIAL SPOT": True,
     "EARLY BLIGHT": True,
     "LATE BLIGHT": True,
@@ -114,6 +150,36 @@ DISEASE_LABELS = {
 }
 
 IMG_SIZE = 224
+
+# ============================================================
+# Fungsi Deteksi Keberadaan Daun (Greenness Filter)
+# ============================================================
+def check_leaf_presence(image_bytes: bytes) -> tuple[bool, float]:
+    """
+    Mengecek apakah gambar yang diunggah mengandung warna hijau daun yang cukup signifikan
+    dan mengembalikan (is_leaf_present, lesion_ratio) untuk validasi penyakit di tahap klasifikasi.
+    """
+    try:
+        img = Image.open(io.BytesIO(image_bytes)).convert("HSV")
+        hsv_arr = np.array(img)
+        h, s, v = hsv_arr[:,:,0], hsv_arr[:,:,1], hsv_arr[:,:,2]
+        
+        # 1. Deteksi warna hijau daun (H: 25 - 100)
+        green_pixels = ((h >= 25) & (h <= 100)) & (s > 35) & (v > 30)
+        green_ratio = float(np.sum(green_pixels) / (h.shape[0] * h.shape[1]))
+        
+        # 2. Deteksi warna kecokelatan / bercak lesi / kering (H: 3 - 22, s > 45, v > 25)
+        lesion_pixels = ((h >= 3) & (h <= 22)) & (s > 45) & (v > 25)
+        lesion_ratio = float(np.sum(lesion_pixels) / (h.shape[0] * h.shape[1]))
+        
+        print(f"[GREEN_FILTER] Hijau daun: {green_ratio:.4f}, Bercak cokelat/lesi: {lesion_ratio:.4f}")
+        
+        # Anggap valid jika warna hijau daun minimal 18% dari luas frame
+        is_leaf = green_ratio > 0.18
+        return is_leaf, lesion_ratio
+    except Exception as e:
+        print(f"[GREEN_FILTER] Gagal memproses filter warna: {e}")
+        return True, 0.0  # Fallback: biarkan prediksi lanjut jika gagal parsing
 
 # ============================================================
 # Fungsi Preprocessing Gambar
@@ -133,7 +199,7 @@ def preprocess_image(image_bytes: bytes) -> np.ndarray:
 # ============================================================
 # Fungsi Prediksi
 # ============================================================
-def predict(image_bytes: bytes):
+def predict(image_bytes: bytes, lesion_ratio: float = 0.0):
     """
     Jalankan prediksi menggunakan model TensorFlow.
     Jika model belum termuat, gunakan mock fallback.
@@ -148,12 +214,56 @@ def predict(image_bytes: bytes):
 
     img_array = preprocess_image(image_bytes)
     predictions = model.predict(img_array, verbose=0)
+    probs = predictions[0]
 
-    class_index = int(np.argmax(predictions[0]))
-    confidence = float(np.max(predictions[0])) * 100
+    # Ambil probabilitas untuk kelas SEHAT (index 9) dan penyakit terbaik (index 0-8)
+    sehat_prob = float(probs[9])
+    best_disease_idx = int(np.argmax(probs[:9]))
+    best_disease_prob = float(probs[best_disease_idx])
+
+    # --- KALIBRASI: BIAS KELAS SEHAT (HEALTHY BOOST FACTOR) ---
+    # Mengalikan probabilitas SEHAT dengan faktor pengali agar model tidak gampang panik (false alarm).
+    HEALTHY_BOOST_FACTOR = 2.2
+    boosted_sehat_prob = sehat_prob * HEALTHY_BOOST_FACTOR
+
+    if boosted_sehat_prob >= best_disease_prob:
+        class_index = 9
+        # Rekalkulasi confidence setelah diboost agar tetap dinormalisasi
+        total = float(sum(probs[:9])) + boosted_sehat_prob
+        confidence = float((boosted_sehat_prob / total) * 100)
+    else:
+        # --- KALIBRASI: OVERRIDE PENYAKIT AKIBAT NOISE (CONFIDENCE THRESHOLD & LESION CHECK) ---
+        # 1. Overriding jika confidence penyakit sangat rendah (< 72%)
+        # 2. Overriding jika fisik daun dominan bersih tanpa bercak cokelat/lesi (< 0.8% lesion_ratio)
+        #    Hanya berlaku untuk penyakit yang menyebabkan bercak cokelat/lesi fisik yang jelas.
+        raw_disease_confidence = best_disease_prob * 100
+        
+        # Daftar index penyakit bercak cokelat/lesi (Bacterial Spot, Early Blight, Late Blight, Septoria, Target Spot)
+        lesion_diseases = {0, 1, 2, 4, 6}
+        
+        should_override = False
+        override_reason = ""
+        
+        if raw_disease_confidence < 72.0:
+            should_override = True
+            override_reason = f"Raw Confidence ({raw_disease_confidence:.2f}%) di bawah threshold 72%"
+        elif best_disease_idx in lesion_diseases and lesion_ratio < 0.008:
+            should_override = True
+            override_reason = f"Lesion Ratio ({lesion_ratio:.4f}) di bawah threshold 0.008 untuk penyakit bercak"
+            
+        if should_override:
+            print(f"[CALIBRATION] Penyakit di-override ke SEHAT. Alasan: {override_reason}")
+            class_index = 9
+            # Hitung kembali confidence SEHAT yang disesuaikan
+            total = float(sum(probs[:9])) + boosted_sehat_prob
+            calculated_conf = float((boosted_sehat_prob / total) * 100) if total > 0 else 0.0
+            confidence = max(calculated_conf, 50.0) # Hindari 0% confidence di UI jika di-override
+        else:
+            class_index = best_disease_idx
+            confidence = float(raw_disease_confidence)
 
     label = LABEL_MAP.get(class_index, "TIDAK DIKETAHUI")
-    return label, round(confidence, 1), False  # is_mock = False
+    return label, round(float(confidence), 1), False  # is_mock = False
 
 
 # ============================================================
@@ -202,6 +312,18 @@ async def receive_sensor_data(data: SensorData):
             }
         )
 
+        # --- STRATEGI A: FIFO Quota Limit (Maks 100 Sensor Readings) ---
+        total_readings = await db.sensorreading.count()
+        if total_readings > 100:
+            excess_count = total_readings - 100
+            old_readings = await db.sensorreading.find_many(
+                take=excess_count,
+                order={"createdAt": "asc"}
+            )
+            for or_data in old_readings:
+                await db.sensorreading.delete(where={"id": or_data.id})
+            print(f"[FIFO] Dihapus {excess_count} sensor reading lama dari database.")
+
         # Cek kondisi alert (suhu terlalu tinggi / kelembapan rendah)
         alerts = []
         if data.temperature > 35:
@@ -249,6 +371,7 @@ async def get_sensor_readings(limit: int = 50):
     readings = await db.sensorreading.find_many(
         take=limit,
         order={"createdAt": "desc"},
+        include={"plant": True}
     )
     return {
         "success": True,
@@ -260,6 +383,7 @@ async def get_sensor_readings(limit: int = 50):
                 "soilMoisture": r.soilMoisture,
                 "plantId": r.plantId,
                 "createdAt": r.createdAt.isoformat(),
+                "plantStatus": r.plant.status if r.plant else "SEHAT"
             }
             for r in readings
         ],
@@ -290,10 +414,159 @@ async def get_alerts(limit: int = 50):
     }
 
 # ============================================================
+# GET Predictions (untuk Frontend Galeri)
+# ============================================================
+@app.get("/api/predictions")
+async def get_predictions(limit: int = 50):
+    """Ambil data prediksi penyakit terbaru untuk galeri."""
+    predictions = await db.prediction.find_many(
+        take=limit,
+        order={"createdAt": "desc"},
+    )
+    return {
+        "success": True,
+        "data": [
+            {
+                "id": p.id,
+                "plantId": p.plantId,
+                "imageUrl": p.imageUrl,
+                "diseaseLabel": p.diseaseLabel,
+                "confidence": p.confidence,
+                "needsReview": p.needsReview,
+                "humanReviewed": p.humanReviewed,
+                "groundTruth": p.groundTruth,
+                "createdAt": p.createdAt.isoformat(),
+            }
+            for p in predictions
+        ],
+    }
+
+# ============================================================
+# Webcam Settings Endpoints (untuk switch dinamis dari Frontend)
+# ============================================================
+class WebcamSettingsRequest(BaseModel):
+    index: int
+
+@app.get("/api/settings/webcam")
+async def get_webcam_settings():
+    try:
+        import webcam_uploader
+        return {"success": True, "webcamIndex": webcam_uploader.WEBCAM_INDEX}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/settings/webcam")
+async def set_webcam_settings(data: WebcamSettingsRequest):
+    try:
+        import webcam_uploader
+        webcam_uploader.set_webcam_index(data.index)
+        return {
+            "success": True, 
+            "message": f"Webcam index diubah ke {data.index}",
+            "webcamIndex": data.index
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+# ============================================================
+# Human-in-the-Loop Review Endpoints
+# ============================================================
+class ReviewRequest(BaseModel):
+    groundTruth: str
+
+@app.get("/api/review/queue")
+async def get_review_queue():
+    """Ambil daftar prediksi yang membutuhkan human review dan belum direview."""
+    queue = await db.prediction.find_many(
+        where={
+            "needsReview": True,
+            "humanReviewed": False
+        },
+        order={"createdAt": "asc"}
+    )
+    return {
+        "success": True,
+        "count": len(queue),
+        "data": [
+            {
+                "id": p.id,
+                "plantId": p.plantId,
+                "imageUrl": p.imageUrl,
+                "diseaseLabel": p.diseaseLabel,
+                "confidence": p.confidence,
+                "createdAt": p.createdAt.isoformat(),
+            }
+            for p in queue
+        ]
+    }
+
+@app.post("/api/review/{id}")
+async def submit_review(id: str, data: ReviewRequest):
+    """
+    Kirim review manusia untuk memperbaiki label prediksi model AI.
+    Menyimpan ground truth dan menandai data sebagai human reviewed.
+    """
+    try:
+        prediction = await db.prediction.find_unique(where={"id": id})
+        if not prediction:
+            raise HTTPException(status_code=404, detail="Data prediksi tidak ditemukan")
+
+        # Update prediction record
+        updated_pred = await db.prediction.update(
+            where={"id": id},
+            data={
+                "humanReviewed": True,
+                "groundTruth": data.groundTruth
+            }
+        )
+
+        # Update status tanaman
+        await db.plant.update(
+            where={"id": prediction.plantId},
+            data={"status": data.groundTruth}
+        )
+
+        return {
+            "success": True,
+            "message": "Review berhasil disimpan",
+            "data": {
+                "id": updated_pred.id,
+                "groundTruth": updated_pred.groundTruth,
+                "humanReviewed": updated_pred.humanReviewed
+            }
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.get("/api/review/logs")
+async def get_review_logs(limit: int = 5):
+    """Ambil log review manusia yang terakhir disubmit."""
+    logs = await db.prediction.find_many(
+        where={
+            "humanReviewed": True
+        },
+        take=limit,
+        order={"createdAt": "desc"}
+    )
+    return {
+        "success": True,
+        "data": [
+            {
+                "id": p.id,
+                "diseaseLabel": p.diseaseLabel,
+                "groundTruth": p.groundTruth,
+                "createdAt": p.createdAt.isoformat(),
+            }
+            for p in logs
+        ]
+    }
+
+# ============================================================
 # Upload + Predict (untuk Frontend & ESP32-CAM nanti)
 # ============================================================
 @app.post("/api/upload")
 async def upload_and_predict(
+    request: Request,
     temperature: float = Form(...),
     humidity: float = Form(...),
     image: UploadFile = File(...)
@@ -301,24 +574,56 @@ async def upload_and_predict(
     """
     Endpoint untuk upload gambar daun tomat dan mendapatkan prediksi penyakit.
     Digunakan oleh Frontend (Testing Manual) maupun ESP32-CAM.
+    Gambar disimpan secara lokal dan disajikan sebagai file statis.
     """
     try:
         # 1. Baca bytes gambar
         image_bytes = await image.read()
 
-        # 2. Jalankan prediksi
-        disease_label, confidence, is_mock = predict(image_bytes)
+        # 2. Filter Deteksi Daun Hijau (mencegah salah deteksi di luar tanaman)
+        is_leaf, lesion_ratio = check_leaf_presence(image_bytes)
+        if not is_leaf:
+            disease_label = "TIDAK TERDETEKSI DAUN HIJAU"
+            confidence = 100.0
+            is_mock = True
+            needs_review = False
+        else:
+            # Jalankan prediksi model TensorFlow jika terdeteksi warna hijau daun
+            disease_label, confidence, is_mock = predict(image_bytes, lesion_ratio=lesion_ratio)
+            
+            # Tambahkan variasi output SEHAT cerdas berdasarkan pembacaan data sensor aktual
+            if disease_label == "SEHAT":
+                if temperature > 30.0:
+                    disease_label = "SEHAT (POTENSI DEHIDRASI / SUHU TINGGI)"
+                elif humidity > 80.0:
+                    disease_label = "SEHAT (KELEMBAPAN TINGGI / RAWAN JAMUR)"
+                elif temperature < 18.0:
+                    disease_label = "SEHAT (SUHU DINGIN / PERTUMBUHAN LAMBAT)"
+                else:
+                    disease_label = "SEHAT (KONDISI OPTIMAL)"
+                    
+            # Tentukan apakah butuh human review (confidence < 85%)
+            needs_review = confidence < 85.0
 
-        # 3. Tentukan apakah butuh human review (confidence < 85%)
-        needs_review = confidence < 85.0
+        # 4. Simpan gambar secara lokal ke static/tomato-images
+        file_ext = os.path.splitext(image.filename)[1] or ".jpg"
+        unique_filename = f"{uuid.uuid4()}{file_ext}"
+        filepath = os.path.join(STATIC_DIR, "tomato-images", unique_filename)
+        
+        with open(filepath, "wb") as f:
+            f.write(image_bytes)
 
-        # 4. Simpan prediksi ke database
+        # Buat URL statis yang bisa diakses secara dinamis oleh browser/frontend
+        base_url = str(request.base_url).rstrip("/")
+        image_url = f"{base_url}/static/tomato-images/{unique_filename}"
+
+        # 5. Simpan prediksi ke database
         plant = await db.plant.find_first()
         if plant:
             await db.prediction.create(
                 data={
                     "plantId": plant.id,
-                    "imageUrl": f"https://storage.supabase.com/tomato-images/{uuid.uuid4()}.jpg",
+                    "imageUrl": image_url,
                     "diseaseLabel": disease_label,
                     "confidence": confidence,
                     "needsReview": needs_review,
@@ -330,6 +635,29 @@ async def upload_and_predict(
                 where={"id": plant.id},
                 data={"status": disease_label},
             )
+
+            # --- STRATEGI A: FIFO Quota Limit (Maks 100 Prediksi Teratas) ---
+            total_predictions = await db.prediction.count()
+            if total_predictions > 100:
+                excess_count = total_predictions - 100
+                old_preds = await db.prediction.find_many(
+                    take=excess_count,
+                    order={"createdAt": "asc"}
+                )
+                for op in old_preds:
+                    # Hapus file fisik gambar lokal jika ada untuk mencegah kelebihan disk space
+                    if "static/tomato-images/" in op.imageUrl:
+                        filename = op.imageUrl.split("static/tomato-images/")[-1]
+                        old_filepath = os.path.join(STATIC_DIR, "tomato-images", filename)
+                        if os.path.exists(old_filepath):
+                            try:
+                                os.remove(old_filepath)
+                                print(f"[FIFO] Dihapus gambar lokal lama: {filename}")
+                            except Exception as file_err:
+                                print(f"[WARNING] Gagal menghapus file {filename}: {file_err}")
+                    
+                    await db.prediction.delete(where={"id": op.id})
+                print(f"[FIFO] Dihapus {excess_count} prediksi lama dari database.")
 
         return {
             "success": True,
@@ -345,7 +673,7 @@ async def upload_and_predict(
                     "confidence": confidence,
                     "needsReview": needs_review,
                     "isDisease": DISEASE_LABELS.get(disease_label, True),
-                    "imageUrl": f"https://storage.supabase.com/tomato-images/{uuid.uuid4()}.jpg",
+                    "imageUrl": image_url,
                     "timestamp": datetime.now().isoformat(),
                 }
             }

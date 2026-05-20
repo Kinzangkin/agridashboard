@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Thermometer, Droplets, Leaf, ArrowUpRight, Activity, Camera, Wind, Zap, CheckCircle2, XCircle, Sprout } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { checkBackendStatus } from "@/lib/api";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -15,41 +16,284 @@ interface SensorReading {
   createdAt: string;
 }
 
+interface PredictionRecord {
+  id: string;
+  imageUrl: string;
+  diseaseLabel: string;
+  confidence: number;
+  createdAt: string;
+}
+
 export default function DashboardPage() {
   const placeholderImg = "https://images.unsplash.com/photo-1592841200221-a6898f307baa?q=80&w=1200&auto=format&fit=crop";
   const [isBackendOnline, setIsBackendOnline] = useState<boolean | null>(null);
   const [sensorData, setSensorData] = useState<SensorReading[]>([]);
   const [latestReading, setLatestReading] = useState<SensorReading | null>(null);
+  const [latestPrediction, setLatestPrediction] = useState<PredictionRecord | null>(null);
+
+  // ESP32-CAM live stream states
+  const [camIp, setCamIp] = useState<string>("");
+  const [useLiveStream, setUseLiveStream] = useState<boolean>(false);
+  const [isEditingIp, setIsEditingIp] = useState<boolean>(false);
+  const [activeModalTab, setActiveModalTab] = useState<"usb" | "esp">("usb");
+  const [imageError, setImageError] = useState<boolean>(false);
+  const [currentWebcamIndex, setCurrentWebcamIndex] = useState<number>(1);
+  const [stream, setStream] = useState<MediaStream | null>(null);
+  const [isWebcamActive, setIsWebcamActive] = useState<boolean>(false);
+  const [cameraConflict, setCameraConflict] = useState<boolean>(false);
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   const fetchSensorData = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/sensor?limit=20`, { cache: "no-store" });
+      const res = await fetch(`${API_BASE_URL}/api/sensor?limit=100`, { cache: "no-store" });
       const json = await res.json();
       if (json.success && json.data.length > 0) {
         setSensorData(json.data);
-        setLatestReading(json.data[0]); // data[0] = terbaru (sorted desc)
+        setLatestReading(json.data[0]); // data[0] = terbaru
       }
     } catch (e) {
       console.error("Failed to fetch sensor data", e);
     }
   }, []);
 
+  const fetchLatestPrediction = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/predictions?limit=1`, { cache: "no-store" });
+      const json = await res.json();
+      if (json.success && json.data.length > 0) {
+        setLatestPrediction(json.data[0]);
+      }
+    } catch (e) {
+      console.error("Failed to fetch latest prediction", e);
+    }
+  }, []);
+
+  const fetchWebcamSettings = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/settings/webcam`, { cache: "no-store" });
+      const json = await res.json();
+      if (json.success) {
+        setCurrentWebcamIndex(json.webcamIndex);
+      }
+    } catch (e) {
+      console.error("Failed to fetch webcam settings", e);
+    }
+  }, []);
+
+  const handleSwitchWebcam = async (index: number) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/settings/webcam`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ index })
+      });
+      const json = await res.json();
+      if (json.success) {
+        setCurrentWebcamIndex(index);
+      }
+    } catch (e) {
+      console.error("Failed to switch webcam settings", e);
+    }
+  };
+
+  const startWebcam = async (deviceIndex: number = 1) => {
+    try {
+      setCameraConflict(false);
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+
+      // Warmup permission stream
+      let tempStream: MediaStream | null = null;
+      try {
+        tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
+      } catch (e) {
+        console.error("Gagal mendapatkan izin awal kamera", e);
+      }
+
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoIn = devices.filter(d => d.kind === "videoinput");
+
+      if (tempStream) {
+        tempStream.getTracks().forEach(track => track.stop());
+      }
+
+      let constraints: MediaStreamConstraints = {
+        video: { 
+          facingMode: "environment",
+          frameRate: { ideal: 30, min: 25 }
+        }
+      };
+
+      if (videoIn.length > 0) {
+        const targetDevice = videoIn[deviceIndex % videoIn.length];
+        constraints = {
+          video: { 
+            deviceId: { exact: targetDevice.deviceId },
+            frameRate: { ideal: 30, min: 25 }
+          }
+        };
+      }
+
+      const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+      setStream(mediaStream);
+      setIsWebcamActive(true);
+
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = mediaStream;
+        }
+      }, 100);
+    } catch (err: any) {
+      console.warn("Gagal mengakses webcam di Dashboard:", err);
+      if (err.name === "NotReadableError" || err.name === "TrackStartError") {
+        setCameraConflict(true);
+      }
+      setIsWebcamActive(false);
+    }
+  };
+
+  const stopWebcam = () => {
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+      setStream(null);
+    }
+    setIsWebcamActive(false);
+  };
+
+  const silentCaptureAndUpload = async () => {
+    if (videoRef.current && isWebcamActive) {
+      const video = videoRef.current;
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+      
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(async (blob) => {
+          if (blob) {
+            const capturedFile = new File([blob], "webcam_capture.jpg", { type: "image/jpeg" });
+            
+            const temp = latestReading?.temperature ?? 25.5;
+            const hum = latestReading?.humidity ?? 70;
+
+            const formData = new FormData();
+            formData.append("image", capturedFile);
+            formData.append("temperature", temp.toString());
+            formData.append("humidity", hum.toString());
+
+            try {
+              const res = await fetch(`${API_BASE_URL}/api/upload`, {
+                method: "POST",
+                body: formData
+              });
+              const json = await res.json();
+              if (json.success) {
+                setLatestPrediction({
+                  id: json.data.prediction.id,
+                  imageUrl: json.data.prediction.imageUrl,
+                  diseaseLabel: json.data.prediction.diseaseLabel,
+                  confidence: json.data.prediction.confidence,
+                  createdAt: new Date().toISOString()
+                });
+              }
+            } catch (err) {
+              console.error("Gagal melakukan unggahan background di Dashboard:", err);
+            }
+          }
+        }, "image/jpeg", 0.95);
+      }
+    }
+  };
+
+  // Sinkronkan start/stop webcam berdasarkan status modal dan IP stream
   useEffect(() => {
+    if (!useLiveStream) {
+      startWebcam(currentWebcamIndex);
+    } else {
+      stopWebcam();
+    }
+    return () => {
+      stopWebcam();
+    };
+  }, [useLiveStream, currentWebcamIndex]);
+
+  // Trigger countdown ketika webcam Dashboard aktif
+  useEffect(() => {
+    if (isWebcamActive) {
+      setCountdown(15);
+    } else {
+      setCountdown(null);
+    }
+  }, [isWebcamActive]);
+
+  // Loop countdown 15s untuk capture di Dashboard secara kontinu
+  useEffect(() => {
+    if (countdown === null) return;
+    if (countdown === 0) {
+      silentCaptureAndUpload();
+      setCountdown(15);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setCountdown(prev => (prev !== null ? prev - 1 : null));
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [countdown]);
+
+  useEffect(() => {
+    setImageError(false);
+  }, [latestPrediction]);
+
+  useEffect(() => {
+    // Load IP setting if available
+    const savedIp = localStorage.getItem("esp32_cam_ip");
+    if (savedIp) {
+      setCamIp(savedIp);
+      setUseLiveStream(true);
+    }
+
     const checkStatus = async () => {
       const isOnline = await checkBackendStatus();
       setIsBackendOnline(isOnline);
     };
+
     checkStatus();
     fetchSensorData();
+    fetchLatestPrediction();
+    fetchWebcamSettings();
 
     // Poll setiap 5 detik
     const interval = setInterval(() => {
       checkStatus();
       fetchSensorData();
+      fetchLatestPrediction();
+      fetchWebcamSettings();
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [fetchSensorData]);
+  }, [fetchSensorData, fetchLatestPrediction]);
+
+  const handleSaveIp = (ip: string) => {
+    const cleanIp = ip.trim();
+    if (cleanIp) {
+      localStorage.setItem("esp32_cam_ip", cleanIp);
+      setCamIp(cleanIp);
+      setUseLiveStream(true);
+      setIsEditingIp(false);
+    }
+  };
+
+  const handleDisableStream = () => {
+    localStorage.removeItem("esp32_cam_ip");
+    setUseLiveStream(false);
+  };
 
   // Hitung rata-rata
   const avgTemp = sensorData.length > 0
@@ -59,9 +303,9 @@ export default function DashboardPage() {
     ? (sensorData.reduce((s, r) => s + r.humidity, 0) / sensorData.length).toFixed(0)
     : "--";
 
-  // Data untuk bar chart (ambil 16 terakhir, reversed agar kiri=lama, kanan=baru)
-  const tempBars = [...sensorData].reverse().slice(-16);
-  const humBars = [...sensorData].reverse().slice(-16);
+  // Data untuk bar chart (ambil 30 terakhir agar muat di UI secara estetik, reversed agar kiri=lama, kanan=baru)
+  const tempBars = [...sensorData].reverse().slice(-30);
+  const humBars = [...sensorData].reverse().slice(-30);
 
   const maxTemp = Math.max(...tempBars.map(r => r.temperature), 40);
   const maxHum = 100;
@@ -81,39 +325,278 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {/* Hero Image (Spans 2 columns, 2 rows) */}
-      <div className="lg:col-span-2 lg:row-span-2 relative rounded-[32px] overflow-hidden shadow-sm border border-white/40 group mt-4 lg:mt-0">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img 
-          src={placeholderImg} 
-          alt="Tomato Plants" 
-          className="w-full h-full object-cover"
-          style={{ minHeight: "400px" }}
-        />
+      {/* Hero Image / Video Stream Section */}
+      <div className="lg:col-span-2 lg:row-span-2 relative rounded-[32px] overflow-hidden shadow-sm border border-white/40 group mt-4 lg:mt-0 bg-slate-900 flex items-center justify-center min-h-[400px]">
+        {useLiveStream && camIp ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img 
+            src={`http://${camIp}:81/stream`} 
+            alt="ESP32-CAM Live Video Stream" 
+            className="w-full h-full object-cover"
+          />
+        ) : cameraConflict ? (
+          <div className="absolute inset-0 w-full h-full bg-gradient-to-br from-slate-900 to-amber-950/80 flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-300">
+            <div className="w-14 h-14 bg-amber-500/10 rounded-full flex items-center justify-center border border-amber-500/20 mb-4 shadow-lg">
+              <Camera className="text-amber-400" size={24} />
+            </div>
+            <h3 className="text-white font-bold text-base mb-1 tracking-wide">Kamera Sedang Digunakan</h3>
+            <p className="text-slate-300 text-[11px] max-w-xs leading-relaxed mb-6">
+              Webcam Anda sedang dikunci oleh program lain (seperti halaman Predictions yang masih terbuka, Zoom, atau aplikasi uploader python).
+              <br/><br/>
+              Silakan tutup tab/aplikasi tersebut untuk menikmati siaran langsung otomatis di Dashboard!
+            </p>
+            <Button 
+              size="sm" 
+              variant="outline" 
+              onClick={() => {
+                setCameraConflict(false);
+                startWebcam(currentWebcamIndex);
+              }}
+              className="glass text-white border-white/20 hover:bg-white/10 text-[10px]"
+            >
+              Coba Hubungkan Ulang
+            </Button>
+          </div>
+        ) : isWebcamActive ? (
+          <div className="relative w-full h-full min-h-[400px] flex-1">
+            <video 
+              ref={videoRef} 
+              autoPlay 
+              playsInline 
+              muted 
+              controls={false}
+              className="w-full h-full object-cover absolute inset-0"
+              style={{ minHeight: "400px" }}
+            />
+            {countdown !== null && (
+              <div className="absolute top-4 right-4 bg-emerald-500/95 backdrop-blur-md text-white font-black text-[10px] px-3.5 py-1.5 rounded-full border border-white/20 flex items-center gap-1.5 shadow-md shadow-emerald-500/20 uppercase tracking-wider z-20 animate-pulse">
+                <span className="w-1.5 h-1.5 bg-white rounded-full animate-ping"></span>
+                Auto-Capture {countdown}s
+              </div>
+            )}
+          </div>
+        ) : (!imageError && latestPrediction?.imageUrl) ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img 
+            src={latestPrediction.imageUrl} 
+            alt="Tomato Leaf Capture" 
+            className="w-full h-full object-cover"
+            style={{ minHeight: "400px" }}
+            onError={() => setImageError(true)}
+          />
+        ) : (
+          // Premium glassmorphic emerald gradient standby placeholder
+          <div className="absolute inset-0 w-full h-full bg-gradient-to-br from-slate-900 to-emerald-950/80 flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-300">
+            <div className="w-16 h-16 bg-white/10 rounded-full flex items-center justify-center border border-white/20 mb-4 shadow-lg animate-pulse">
+              <Camera className="text-emerald-400" size={28} />
+            </div>
+            <h3 className="text-white font-bold text-lg mb-1 tracking-wide">Webcam Uploader Aktif</h3>
+            <p className="text-slate-300 text-xs max-w-sm leading-relaxed mb-6">
+              Belum ada foto tanaman tomat yang terekam atau link gambar lama tidak valid. 
+              Pastikan webcam USB Anda tercolok dan uploader otomatis di latar belakang berjalan!
+            </p>
+            <div className="flex gap-2">
+              <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-3 py-1 rounded-full">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                Standby Mode
+              </span>
+            </div>
+          </div>
+        )}
         
-        {/* Floating Health Status Widget (Center) */}
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 glass rounded-[28px] p-6 w-72 flex flex-col items-center justify-center border border-white/50 shadow-2xl">
-          <div className="w-full flex justify-between items-center mb-4">
-            <div className="flex items-center gap-2 text-slate-800 font-medium">
+        {/* Floating Health Status Widget (Bottom-Right) */}
+        <div className="absolute bottom-6 right-6 glass bg-white/80 backdrop-blur-md rounded-[24px] p-5 w-64 flex flex-col items-center justify-center border border-white/50 shadow-xl">
+          <div className="w-full flex justify-between items-center mb-3">
+            <div className="flex items-center gap-2 text-slate-800 text-sm font-medium">
               <SparkleIcon /> Status ML
             </div>
-            <div className="w-8 h-8 rounded-full bg-white/50 flex items-center justify-center">
-              <ArrowUpRight size={16} className="text-slate-600" />
+            <div className="w-7 h-7 rounded-full bg-white/50 flex items-center justify-center">
+              <ArrowUpRight size={14} className="text-slate-600" />
             </div>
           </div>
           
-          <div className="relative w-40 h-20 overflow-hidden mb-2">
-            <div className="absolute top-0 left-0 w-40 h-40 rounded-full border-12 border-emerald-100 border-t-emerald-500 border-l-emerald-500 rotate-45"></div>
+          <div className="relative w-32 h-16 overflow-hidden mb-1">
+            <div className="absolute top-0 left-0 w-32 h-32 rounded-full border-8 border-emerald-100 border-t-emerald-500 border-l-emerald-500 rotate-45"></div>
           </div>
-          <h2 className="text-4xl font-bold text-slate-800">96%</h2>
-          <p className="text-emerald-600 font-medium mt-1">SEHAT (Normal)</p>
+          <h2 className="text-3xl font-bold text-slate-800">
+            {latestPrediction ? `${latestPrediction.confidence.toFixed(0)}%` : "96%"}
+          </h2>
+          <p className={`font-semibold mt-1 uppercase text-xs ${
+            (latestPrediction?.diseaseLabel || "SEHAT") === "SEHAT" ? "text-emerald-600" : "text-rose-600"
+          }`}>
+            {latestPrediction?.diseaseLabel || "SEHAT (Normal)"}
+          </p>
         </div>
         
-        {/* ESP32 Label */}
-        <div className="absolute bottom-6 left-6 glass px-4 py-2 rounded-full text-xs font-semibold text-slate-700 flex items-center gap-2">
-          <Camera size={14} /> 
-          {sensorData.length > 0 ? `ESP32 Terhubung (${sensorData.length} data)` : "ESP32-CAM Feed (Mock)"}
+        {/* ESP32 Label & Stream Toggle Button */}
+        <div className="absolute bottom-6 left-6 flex items-center gap-2">
+          <div className="glass px-4 py-2 rounded-full text-xs font-semibold text-slate-700 flex items-center gap-2 border border-white/60">
+            <Camera size={14} className={useLiveStream ? "animate-pulse text-rose-500" : ""} /> 
+            {useLiveStream ? `Streaming Live: http://${camIp}:81/stream` : "ESP32-CAM Feed (Database)"}
+          </div>
+          
+          <button 
+            onClick={() => setIsEditingIp(true)}
+            className="glass hover:bg-white/80 p-2.5 rounded-full border border-white/60 shadow-lg text-slate-700 transition-colors flex items-center justify-center"
+            title="Konfigurasi Stream Kamera"
+          >
+            <Zap size={14} />
+          </button>
+
+          {useLiveStream && (
+            <button 
+              onClick={handleDisableStream}
+              className="glass bg-rose-500/15 hover:bg-rose-500/35 px-4 py-2 rounded-full border border-rose-200 shadow-lg text-rose-700 text-xs font-bold transition-colors"
+            >
+              Matikan Live
+            </button>
+          )}
         </div>
+
+        {/* IP Config Overlay Modal */}
+        {isEditingIp && (
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+            <div className="glass bg-white/95 p-6 rounded-3xl w-full max-w-sm border border-white shadow-2xl animate-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
+              
+              {/* Tab Navigation */}
+              <div className="flex bg-slate-100 p-1 rounded-xl mb-4">
+                <button
+                  type="button"
+                  onClick={() => setActiveModalTab("usb")}
+                  className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                    activeModalTab === "usb" 
+                      ? "bg-white text-emerald-600 shadow-sm" 
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  Webcam USB (Kabel)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveModalTab("esp")}
+                  className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                    activeModalTab === "esp" 
+                      ? "bg-white text-emerald-600 shadow-sm" 
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  ESP32-CAM (Wi-Fi)
+                </button>
+              </div>
+
+              {activeModalTab === "usb" ? (
+                <div className="py-1">
+                  <h3 className="font-bold text-slate-800 mb-1 flex items-center gap-2">
+                    <Camera className="text-emerald-500" size={18} />
+                    Pilih Input Kamera USB
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mb-4 leading-relaxed">
+                    Pilih tipe webcam lokal yang terhubung ke server backend Anda untuk analisis otomatis.
+                  </p>
+
+                  <div className="flex flex-col gap-2.5 mb-5">
+                    {/* Kamera Eksternal USB Card */}
+                    <button
+                      type="button"
+                      onClick={() => handleSwitchWebcam(1)}
+                      className={`flex items-center gap-3 p-3 rounded-2xl border text-left transition-all ${
+                        currentWebcamIndex === 1
+                          ? "bg-emerald-50 border-emerald-500 shadow-sm"
+                          : "bg-white border-slate-100 hover:border-slate-300"
+                      }`}
+                    >
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                        currentWebcamIndex === 1 ? "bg-emerald-500 text-white" : "bg-slate-100 text-slate-500"
+                      }`}>
+                        <Camera size={16} />
+                      </div>
+                      <div className="flex-1">
+                        <p className={`text-xs font-bold ${currentWebcamIndex === 1 ? "text-emerald-800" : "text-slate-700"}`}>
+                          Webcam Eksternal USB
+                        </p>
+                        <p className="text-[10px] text-slate-400">Kamera Tambahan / Kabel USB</p>
+                      </div>
+                      {currentWebcamIndex === 1 && (
+                        <div className="w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center text-[10px] font-bold">✓</div>
+                      )}
+                    </button>
+
+                    {/* Kamera Bawaan Laptop Card */}
+                    <button
+                      type="button"
+                      onClick={() => handleSwitchWebcam(0)}
+                      className={`flex items-center gap-3 p-3 rounded-2xl border text-left transition-all ${
+                        currentWebcamIndex === 0
+                          ? "bg-emerald-50 border-emerald-500 shadow-sm"
+                          : "bg-white border-slate-100 hover:border-slate-300"
+                      }`}
+                    >
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                        currentWebcamIndex === 0 ? "bg-emerald-500 text-white" : "bg-slate-100 text-slate-500"
+                      }`}>
+                        <Camera size={16} />
+                      </div>
+                      <div className="flex-1">
+                        <p className={`text-xs font-bold ${currentWebcamIndex === 0 ? "text-emerald-800" : "text-slate-700"}`}>
+                          Webcam Bawaan Laptop
+                        </p>
+                        <p className="text-[10px] text-slate-400">Kamera Internal / Built-in</p>
+                      </div>
+                      {currentWebcamIndex === 0 && (
+                        <div className="w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center text-[10px] font-bold">✓</div>
+                      )}
+                    </button>
+                  </div>
+
+                  <Button 
+                    onClick={() => {
+                      setIsEditingIp(false);
+                      setUseLiveStream(false);
+                    }} 
+                    className="w-full bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs py-2.5 font-bold shadow-md shadow-emerald-500/10"
+                  >
+                    Simpan & Terapkan
+                  </Button>
+                </div>
+              ) : (
+                <div>
+                  <h3 className="font-bold text-slate-800 mb-2 flex items-center gap-2">
+                    <Camera className="text-emerald-500" size={18} />
+                    ESP32-CAM Live Stream
+                  </h3>
+                  <p className="text-xs text-slate-500 mb-4 leading-relaxed">
+                    Masukkan alamat IP lokal ESP32-CAM Anda (contoh: <code>192.168.1.100</code>) jika Anda menggunakan modul kamera Wi-Fi terpisah.
+                  </p>
+                  
+                  <input 
+                    type="text" 
+                    placeholder="Contoh: 192.168.1.100" 
+                    value={camIp}
+                    onChange={(e) => setCamIp(e.target.value)}
+                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400/50 mb-4"
+                  />
+                  
+                  <div className="flex gap-2">
+                    <Button 
+                      onClick={() => setIsEditingIp(false)} 
+                      variant="ghost" 
+                      className="flex-1 rounded-xl text-xs text-slate-500"
+                    >
+                      Batal
+                    </Button>
+                    <Button 
+                      onClick={() => handleSaveIp(camIp)} 
+                      disabled={!camIp}
+                      className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs"
+                    >
+                      Hubungkan Stream
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Right Card 1: Total Sensor Readings */}
@@ -151,7 +634,7 @@ export default function DashboardPage() {
         </div>
         <div className="flex-1 mt-6 flex items-end gap-1.5 h-24">
           {(sensorData.length > 0
-            ? [...sensorData].reverse().slice(-10).map((r) => r.soilMoisture ?? 0)
+            ? [...sensorData].reverse().slice(-30).map((r) => r.soilMoisture ?? 0)
             : [60, 40, 70, 50, 85, 65, 45, 80, 55, 90]
           ).map((h, i) => (
             <div key={i} className={`flex-1 rounded-t-sm ${i % 2 === 0 ? 'bg-orange-400' : 'bg-slate-300/50'}`} style={{ height: `${Math.min(h, 100)}%` }}></div>
@@ -180,8 +663,7 @@ export default function DashboardPage() {
             <div className="w-6 h-6 rounded-full bg-white/50 flex items-center justify-center"><ArrowUpRight size={12} className="text-slate-600" /></div>
           </div>
         </div>
-
-
+        
         <div className="glass rounded-[24px] p-5 flex flex-col justify-between border border-white/60 hover:bg-white/40 transition-colors">
           <div className="flex items-center gap-2 text-slate-600 text-sm font-medium">
             <Leaf size={16} /> Model Val
