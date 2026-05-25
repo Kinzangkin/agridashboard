@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Search, Filter, AlertCircle, ArrowUpRight, X, AlertTriangle, CheckCircle2, Thermometer, Droplets, Upload, Loader2, Camera } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { uploadPredict, PredictionResponse } from "@/lib/api";
@@ -192,24 +192,8 @@ export default function PredictionsPage() {
     }
   }, [isWebcamActive]);
 
-  // Jam countdown timer loop 15 detik (kontinu tanpa menghentikan kamera)
-  useEffect(() => {
-    if (countdown === null) return;
-    if (countdown === 0) {
-      silentCaptureAndUpload();
-      setCountdown(15); // Reset hitung mundur ke 15 untuk siklus berikutnya secara kontinu!
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      setCountdown(prev => (prev !== null ? prev - 1 : null));
-    }, 1000);
-
-    return () => clearTimeout(timer);
-  }, [countdown]);
-
   // Tangkap & Kirim Otomatis ke Backend secara SILENT (Kamera tetap menyala 30fps)
-  const silentCaptureAndUpload = async () => {
+  const silentCaptureAndUpload = useCallback(async () => {
     if (videoRef.current && isWebcamActive) {
       const video = videoRef.current;
       const canvas = document.createElement("canvas");
@@ -247,7 +231,23 @@ export default function PredictionsPage() {
         }, "image/jpeg", 0.95);
       }
     }
-  };
+  }, [isWebcamActive, temperature, humidity]);
+
+  // Jam countdown timer loop 15 detik (kontinu tanpa menghentikan kamera)
+  useEffect(() => {
+    if (countdown === null) return;
+    if (countdown === 0) {
+      silentCaptureAndUpload();
+      setCountdown(15); // Reset hitung mundur ke 15 untuk siklus berikutnya secara kontinu!
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setCountdown(prev => (prev !== null ? prev - 1 : null));
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [countdown, silentCaptureAndUpload]);
 
   const filteredPredictions = predictions.filter((p) => {
     const shortId = `PIC-${p.id.slice(0, 5).toUpperCase()}`;
@@ -723,7 +723,7 @@ export default function PredictionsPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           {filteredPredictions.map((pred, i) => {
-            const isHealthy = pred.diseaseLabel.toUpperCase() === "SEHAT";
+            const isHealthy = pred.diseaseLabel.toUpperCase().includes("SEHAT");
             const isLowConf = pred.confidence < 90;
             const formattedTime = formatTime(pred.createdAt);
             const formattedDate = formatDate(pred.createdAt);
@@ -815,12 +815,12 @@ export default function PredictionsPage() {
                 <div className="flex gap-4 mb-6 p-4 glass rounded-2xl border border-white/50">
                   <div>
                     <p className="text-[10px] text-slate-500 uppercase tracking-wide font-bold">Suhu Saat Itu</p>
-                    <p className="font-semibold text-slate-800 flex items-center gap-1"><Thermometer size={14} className="text-rose-500" /> 26.5°C (Est)</p>
+                    <p className="font-medium text-slate-500 flex items-center gap-1 text-sm italic"><Thermometer size={14} className="text-rose-400" /> Tidak tersimpan</p>
                   </div>
                   <div className="w-px bg-slate-200"></div>
                   <div>
                     <p className="text-[10px] text-slate-500 uppercase tracking-wide font-bold">Kelembapan</p>
-                    <p className="font-semibold text-slate-800 flex items-center gap-1"><Droplets size={14} className="text-blue-500" /> 78% (Est)</p>
+                    <p className="font-medium text-slate-500 flex items-center gap-1 text-sm italic"><Droplets size={14} className="text-blue-400" /> Tidak tersimpan</p>
                   </div>
                 </div>
 

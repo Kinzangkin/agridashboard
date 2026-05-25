@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Thermometer, Droplets, Leaf, ArrowUpRight, Activity, Camera, Wind, Zap, CheckCircle2, XCircle, Sprout } from "lucide-react";
+import { Thermometer, Droplets, Leaf, ArrowUpRight, Activity, Camera, Wind, Zap, CheckCircle2, XCircle, Sprout, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { checkBackendStatus } from "@/lib/api";
 
@@ -82,18 +82,15 @@ export default function DashboardPage() {
   }, []);
 
   const handleSwitchWebcam = async (index: number) => {
+    setCurrentWebcamIndex(index);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/settings/webcam`, {
+      await fetch(`${API_BASE_URL}/api/settings/webcam`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({ index })
       });
-      const json = await res.json();
-      if (json.success) {
-        setCurrentWebcamIndex(index);
-      }
     } catch (e) {
       console.error("Failed to switch webcam settings", e);
     }
@@ -164,16 +161,32 @@ export default function DashboardPage() {
     setIsWebcamActive(false);
   };
 
-  const silentCaptureAndUpload = async () => {
-    if (videoRef.current && isWebcamActive) {
-      const video = videoRef.current;
+  const silentCaptureAndUpload = useCallback(async () => {
+    let sourceElement: HTMLVideoElement | HTMLImageElement | null = null;
+    let width = 640;
+    let height = 480;
+
+    if (isWebcamActive && videoRef.current) {
+      sourceElement = videoRef.current;
+      width = videoRef.current.videoWidth || 640;
+      height = videoRef.current.videoHeight || 480;
+    } else if (useLiveStream) {
+      const imgEl = document.getElementById("ip-camera-stream") as HTMLImageElement;
+      if (imgEl && imgEl.complete) {
+        sourceElement = imgEl;
+        width = imgEl.naturalWidth || 640;
+        height = imgEl.naturalHeight || 480;
+      }
+    }
+
+    if (sourceElement) {
       const canvas = document.createElement("canvas");
-      canvas.width = video.videoWidth || 640;
-      canvas.height = video.videoHeight || 480;
+      canvas.width = width;
+      canvas.height = height;
       
       const ctx = canvas.getContext("2d");
       if (ctx) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        ctx.drawImage(sourceElement, 0, 0, canvas.width, canvas.height);
         canvas.toBlob(async (blob) => {
           if (blob) {
             const capturedFile = new File([blob], "webcam_capture.jpg", { type: "image/jpeg" });
@@ -194,12 +207,14 @@ export default function DashboardPage() {
               const json = await res.json();
               if (json.success) {
                 setLatestPrediction({
-                  id: json.data.prediction.id,
+                  id: json.data.prediction.id ?? "",
                   imageUrl: json.data.prediction.imageUrl,
                   diseaseLabel: json.data.prediction.diseaseLabel,
                   confidence: json.data.prediction.confidence,
                   createdAt: new Date().toISOString()
                 });
+              } else {
+                console.error("[Dashboard] Prediksi gagal dari backend:", json.error);
               }
             } catch (err) {
               console.error("Gagal melakukan unggahan background di Dashboard:", err);
@@ -208,6 +223,45 @@ export default function DashboardPage() {
         }, "image/jpeg", 0.95);
       }
     }
+  }, [isWebcamActive, useLiveStream, latestReading]);
+
+  const handleManualUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    const temp = latestReading?.temperature ?? 25.5;
+    const hum = latestReading?.humidity ?? 70;
+
+    const formData = new FormData();
+    formData.append("image", file);
+    formData.append("temperature", temp.toString());
+    formData.append("humidity", hum.toString());
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/upload`, {
+        method: "POST",
+        body: formData
+      });
+      const json = await res.json();
+      if (json.success) {
+        setLatestPrediction({
+          id: json.data.prediction.id,
+          imageUrl: json.data.prediction.imageUrl,
+          diseaseLabel: json.data.prediction.diseaseLabel,
+          confidence: json.data.prediction.confidence,
+          createdAt: new Date().toISOString()
+        });
+        
+        // Hentikan webcam sementara agar pengguna bisa melihat hasil unggahan manual
+        stopWebcam();
+        setCountdown(null);
+      }
+    } catch (err) {
+      console.error("Gagal melakukan unggahan file manual:", err);
+    }
+    
+    // Reset value input agar bisa unggah file yang sama lagi jika perlu
+    e.target.value = '';
   };
 
   // Sinkronkan start/stop webcam berdasarkan status modal dan IP stream
@@ -224,12 +278,12 @@ export default function DashboardPage() {
 
   // Trigger countdown ketika webcam Dashboard aktif
   useEffect(() => {
-    if (isWebcamActive) {
+    if (isWebcamActive || useLiveStream) {
       setCountdown(15);
     } else {
       setCountdown(null);
     }
-  }, [isWebcamActive]);
+  }, [isWebcamActive, useLiveStream]);
 
   // Loop countdown 15s untuk capture di Dashboard secara kontinu
   useEffect(() => {
@@ -245,7 +299,7 @@ export default function DashboardPage() {
     }, 1000);
 
     return () => clearTimeout(timer);
-  }, [countdown]);
+  }, [countdown, silentCaptureAndUpload]);
 
   useEffect(() => {
     setImageError(false);
@@ -278,7 +332,7 @@ export default function DashboardPage() {
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [fetchSensorData, fetchLatestPrediction]);
+  }, [fetchSensorData, fetchLatestPrediction, fetchWebcamSettings]);
 
   const handleSaveIp = (ip: string) => {
     const cleanIp = ip.trim();
@@ -330,8 +384,10 @@ export default function DashboardPage() {
         {useLiveStream && camIp ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img 
-            src={`http://${camIp}:81/stream`} 
-            alt="ESP32-CAM Live Video Stream" 
+            id="ip-camera-stream"
+            crossOrigin="anonymous"
+            src={camIp.startsWith('http') ? `${API_BASE_URL}/api/stream?url=${encodeURIComponent(camIp)}` : `http://${camIp}:81/stream`} 
+            alt="IP Camera Live Video Stream" 
             className="w-full h-full object-cover"
           />
         ) : cameraConflict ? (
@@ -421,18 +477,16 @@ export default function DashboardPage() {
           <h2 className="text-3xl font-bold text-slate-800">
             {latestPrediction ? `${latestPrediction.confidence.toFixed(0)}%` : "96%"}
           </h2>
-          <p className={`font-semibold mt-1 uppercase text-xs ${
-            (latestPrediction?.diseaseLabel || "SEHAT") === "SEHAT" ? "text-emerald-600" : "text-rose-600"
-          }`}>
+          <p className={`font-semibold mt-1 uppercase text-xs ${(latestPrediction?.diseaseLabel || "SEHAT").includes("SEHAT") ? "text-emerald-600" : "text-rose-600"}`}>
             {latestPrediction?.diseaseLabel || "SEHAT (Normal)"}
           </p>
         </div>
         
         {/* ESP32 Label & Stream Toggle Button */}
         <div className="absolute bottom-6 left-6 flex items-center gap-2">
-          <div className="glass px-4 py-2 rounded-full text-xs font-semibold text-slate-700 flex items-center gap-2 border border-white/60">
-            <Camera size={14} className={useLiveStream ? "animate-pulse text-rose-500" : ""} /> 
-            {useLiveStream ? `Streaming Live: http://${camIp}:81/stream` : "ESP32-CAM Feed (Database)"}
+          <div className="glass px-4 py-2 rounded-full text-xs font-semibold text-slate-700 flex items-center gap-2 border border-white/60 max-w-[300px] overflow-hidden text-ellipsis whitespace-nowrap">
+            <Camera size={14} className={useLiveStream ? "animate-pulse text-rose-500 min-w-[14px]" : "min-w-[14px]"} /> 
+            {useLiveStream ? `Live: ${camIp.startsWith('http') ? camIp : 'http://' + camIp + ':81/stream'}` : "ESP32-CAM Feed"}
           </div>
           
           <button 
@@ -442,6 +496,21 @@ export default function DashboardPage() {
           >
             <Zap size={14} />
           </button>
+
+          <button 
+            onClick={() => document.getElementById('manual-upload-input')?.click()}
+            className="glass hover:bg-white/80 px-4 py-2 rounded-full border border-white/60 shadow-lg text-slate-700 transition-colors flex items-center gap-2 text-xs font-semibold"
+            title="Unggah Foto Manual"
+          >
+            <Upload size={14} /> Unggah Manual
+          </button>
+          <input 
+            type="file" 
+            id="manual-upload-input" 
+            className="hidden" 
+            accept="image/*" 
+            onChange={handleManualUpload} 
+          />
 
           {useLiveStream && (
             <button 
@@ -562,15 +631,15 @@ export default function DashboardPage() {
                 <div>
                   <h3 className="font-bold text-slate-800 mb-2 flex items-center gap-2">
                     <Camera className="text-emerald-500" size={18} />
-                    ESP32-CAM Live Stream
+                    IP Camera / ESP32-CAM
                   </h3>
                   <p className="text-xs text-slate-500 mb-4 leading-relaxed">
-                    Masukkan alamat IP lokal ESP32-CAM Anda (contoh: <code>192.168.1.100</code>) jika Anda menggunakan modul kamera Wi-Fi terpisah.
+                    Masukkan IP lokal ESP32-CAM (contoh: <code>192.168.1.100</code>) ATAU masukkan URL penuh dari aplikasi IP Camera di HP Anda (contoh: <code>http://192.168.1.5:8080/video</code>).
                   </p>
                   
                   <input 
                     type="text" 
-                    placeholder="Contoh: 192.168.1.100" 
+                    placeholder="Contoh: http://192.168.1.5:8080/video" 
                     value={camIp}
                     onChange={(e) => setCamIp(e.target.value)}
                     className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400/50 mb-4"

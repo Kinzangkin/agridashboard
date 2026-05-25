@@ -1,4 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
@@ -11,6 +12,7 @@ import io
 import numpy as np
 from PIL import Image
 import tensorflow as tf
+import cv2
 from prisma import Prisma
 
 # ============================================================
@@ -56,7 +58,7 @@ async def lifespan(app: FastAPI):
         print("[OK] Default plant created.")
 
     # Jalankan webcam uploader secara otomatis di latar belakang
-    run_webcam_uploader_in_background()
+    # run_webcam_uploader_in_background()
 
     yield
 
@@ -158,28 +160,69 @@ def check_leaf_presence(image_bytes: bytes) -> tuple[bool, float]:
     """
     Mengecek apakah gambar yang diunggah mengandung warna hijau daun yang cukup signifikan
     dan mengembalikan (is_leaf_present, lesion_ratio) untuk validasi penyakit di tahap klasifikasi.
+    Menggunakan OpenCV (H: 0-179) agar konsisten dengan draw_leaf_bounding_box().
     """
     try:
-        img = Image.open(io.BytesIO(image_bytes)).convert("HSV")
-        hsv_arr = np.array(img)
-        h, s, v = hsv_arr[:,:,0], hsv_arr[:,:,1], hsv_arr[:,:,2]
-        
-        # 1. Deteksi warna hijau daun (H: 25 - 100)
-        green_pixels = ((h >= 25) & (h <= 100)) & (s > 35) & (v > 30)
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        if img is None:
+            return True, 0.0
+
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        h, s, v = hsv[:,:,0], hsv[:,:,1], hsv[:,:,2]
+
+        # OpenCV HSV scale: H: 0-179, S: 0-255, V: 0-255
+        # 1. Deteksi warna hijau daun (H: 25-90 pada skala OpenCV 0-179)
+        green_pixels = ((h >= 25) & (h <= 90)) & (s > 40) & (v > 40)
         green_ratio = float(np.sum(green_pixels) / (h.shape[0] * h.shape[1]))
-        
-        # 2. Deteksi warna kecokelatan / bercak lesi / kering (H: 3 - 22, s > 45, v > 25)
-        lesion_pixels = ((h >= 3) & (h <= 22)) & (s > 45) & (v > 25)
+
+        # 2. Deteksi warna kecokelatan / bercak lesi / kering (H: 3-22 pada skala OpenCV 0-179)
+        lesion_pixels = ((h >= 3) & (h <= 22)) & (s > 50) & (v > 30)
         lesion_ratio = float(np.sum(lesion_pixels) / (h.shape[0] * h.shape[1]))
-        
+
         print(f"[GREEN_FILTER] Hijau daun: {green_ratio:.4f}, Bercak cokelat/lesi: {lesion_ratio:.4f}")
-        
+
         # Anggap valid jika warna hijau daun minimal 18% dari luas frame
         is_leaf = green_ratio > 0.18
         return is_leaf, lesion_ratio
     except Exception as e:
         print(f"[GREEN_FILTER] Gagal memproses filter warna: {e}")
         return True, 0.0  # Fallback: biarkan prediksi lanjut jika gagal parsing
+
+# ============================================================
+# Fungsi Menggambar Bounding Box
+# ============================================================
+def draw_leaf_bounding_box(image_bytes: bytes) -> bytes:
+    try:
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        if img is None:
+            return image_bytes
+
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        
+        lower_green = np.array([25, 40, 40])
+        upper_green = np.array([90, 255, 255])
+        
+        mask = cv2.inRange(hsv, lower_green, upper_green)
+        
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if contours:
+            largest_contour = max(contours, key=cv2.contourArea)
+            if cv2.contourArea(largest_contour) > 500:
+                x, y, w, h = cv2.boundingRect(largest_contour)
+                cv2.rectangle(img, (x, y), (x+w, y+h), (0, 255, 0), 4)
+                cv2.putText(img, "Daun Terdeteksi", (x, max(30, y-10)), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+        
+        _, buffer = cv2.imencode('.jpg', img)
+        return buffer.tobytes()
+    except Exception as e:
+        print(f"[BBOX] Gagal menggambar bounding box: {e}")
+        return image_bytes
 
 # ============================================================
 # Fungsi Preprocessing Gambar
@@ -223,7 +266,7 @@ def predict(image_bytes: bytes, lesion_ratio: float = 0.0):
 
     # --- KALIBRASI: BIAS KELAS SEHAT (HEALTHY BOOST FACTOR) ---
     # Mengalikan probabilitas SEHAT dengan faktor pengali agar model tidak gampang panik (false alarm).
-    HEALTHY_BOOST_FACTOR = 2.2
+    HEALTHY_BOOST_FACTOR = 1.5
     boosted_sehat_prob = sehat_prob * HEALTHY_BOOST_FACTOR
 
     if boosted_sehat_prob >= best_disease_prob:
@@ -233,7 +276,7 @@ def predict(image_bytes: bytes, lesion_ratio: float = 0.0):
         confidence = float((boosted_sehat_prob / total) * 100)
     else:
         # --- KALIBRASI: OVERRIDE PENYAKIT AKIBAT NOISE (CONFIDENCE THRESHOLD & LESION CHECK) ---
-        # 1. Overriding jika confidence penyakit sangat rendah (< 72%)
+        # 1. Overriding jika confidence penyakit sangat rendah (< 50%)
         # 2. Overriding jika fisik daun dominan bersih tanpa bercak cokelat/lesi (< 0.8% lesion_ratio)
         #    Hanya berlaku untuk penyakit yang menyebabkan bercak cokelat/lesi fisik yang jelas.
         raw_disease_confidence = best_disease_prob * 100
@@ -244,9 +287,9 @@ def predict(image_bytes: bytes, lesion_ratio: float = 0.0):
         should_override = False
         override_reason = ""
         
-        if raw_disease_confidence < 72.0:
+        if raw_disease_confidence < 50.0:
             should_override = True
-            override_reason = f"Raw Confidence ({raw_disease_confidence:.2f}%) di bawah threshold 72%"
+            override_reason = f"Raw Confidence ({raw_disease_confidence:.2f}%) di bawah threshold 50%"
         elif best_disease_idx in lesion_diseases and lesion_ratio < 0.008:
             should_override = True
             override_reason = f"Lesion Ratio ({lesion_ratio:.4f}) di bawah threshold 0.008 untuk penyakit bercak"
@@ -610,8 +653,14 @@ async def upload_and_predict(
         unique_filename = f"{uuid.uuid4()}{file_ext}"
         filepath = os.path.join(STATIC_DIR, "tomato-images", unique_filename)
         
+        # Tambahkan Bounding Box sebelum disimpan
+        if is_leaf:
+            image_bytes_to_save = draw_leaf_bounding_box(image_bytes)
+        else:
+            image_bytes_to_save = image_bytes
+
         with open(filepath, "wb") as f:
-            f.write(image_bytes)
+            f.write(image_bytes_to_save)
 
         # Buat URL statis yang bisa diakses secara dinamis oleh browser/frontend
         base_url = str(request.base_url).rstrip("/")
@@ -619,8 +668,9 @@ async def upload_and_predict(
 
         # 5. Simpan prediksi ke database
         plant = await db.plant.find_first()
+        prediction_record = None
         if plant:
-            await db.prediction.create(
+            prediction_record = await db.prediction.create(
                 data={
                     "plantId": plant.id,
                     "imageUrl": image_url,
@@ -669,6 +719,7 @@ async def upload_and_predict(
                     "humidity": humidity,
                 },
                 "prediction": {
+                    "id": prediction_record.id if prediction_record else None,
                     "diseaseLabel": disease_label,
                     "confidence": confidence,
                     "needsReview": needs_review,
@@ -681,6 +732,68 @@ async def upload_and_predict(
 
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+# ============================================================
+# Stream Proxy (dengan Bounding Box Real-time)
+# ============================================================
+def generate_frames(camera_url: str):
+    """Generator untuk membaca frame dari IP Camera, menggambar bounding box, dan stream sebagai MJPEG."""
+    import requests
+    
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        res = requests.get(camera_url, stream=True, timeout=10, headers=headers)
+        bytes_data = bytes()
+        
+        for chunk in res.iter_content(chunk_size=4096):
+            bytes_data += chunk
+            a = bytes_data.find(b'\xff\xd8')
+            b = bytes_data.find(b'\xff\xd9')
+            
+            if a != -1 and b != -1:
+                if a < b:
+                    jpg = bytes_data[a:b+2]
+                    bytes_data = bytes_data[b+2:]
+                    
+                    # Decode image
+                    frame = cv2.imdecode(np.frombuffer(jpg, dtype=np.uint8), cv2.IMREAD_COLOR)
+                    
+                    if frame is not None:
+                        # Gambar bounding box pada frame
+                        try:
+                            hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+                            lower_green = np.array([25, 40, 40])
+                            upper_green = np.array([90, 255, 255])
+                            mask = cv2.inRange(hsv, lower_green, upper_green)
+                            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                            
+                            if contours:
+                                largest_contour = max(contours, key=cv2.contourArea)
+                                if cv2.contourArea(largest_contour) > 500:
+                                    x, y, w, h = cv2.boundingRect(largest_contour)
+                                    cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 4)
+                                    cv2.putText(frame, "Daun Terdeteksi", (x, max(30, y-10)), 
+                                                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+                        except Exception:
+                            pass
+                            
+                        ret, buffer = cv2.imencode('.jpg', frame)
+                        if ret:
+                            frame_bytes = buffer.tobytes()
+                            yield (b'--frame\r\n'
+                                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                else:
+                    # Misaligned headers, discard the broken part
+                    bytes_data = bytes_data[a:]
+    except Exception as e:
+        print(f"[STREAM ERROR] Gagal membaca stream dari {camera_url}: {e}")
+
+@app.get("/api/stream")
+async def proxy_stream(url: str):
+    """Endpoint untuk melakukan proxy ke IP Camera dan menempelkan AI Bounding Box."""
+    return StreamingResponse(generate_frames(url), media_type="multipart/x-mixed-replace; boundary=frame")
 
 
 if __name__ == "__main__":

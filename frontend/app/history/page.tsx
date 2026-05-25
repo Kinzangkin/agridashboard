@@ -149,7 +149,7 @@ export default function HistoryPage() {
               ) : (
                 filteredReadings.map((row) => {
                   const shortId = `LOG-${row.id.slice(0, 5).toUpperCase()}`;
-                  const isHealthy = row.plantStatus.toUpperCase() === 'SEHAT';
+                  const isHealthy = row.plantStatus.toUpperCase().includes('SEHAT');
                   return (
                     <tr key={row.id} className="border-b border-white/20 hover:bg-white/30 transition-colors group">
                       <td className="py-4 px-4 text-sm font-medium text-slate-700">{shortId}</td>

@@ -43,6 +43,7 @@ export default function ReviewPage() {
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [showOthers, setShowOthers] = useState<boolean>(false);
   const [customLabel, setCustomLabel] = useState<string>("");
+  const [showRetrainMsg, setShowRetrainMsg] = useState<boolean>(false);
 
   const fetchQueue = async () => {
     try {
@@ -60,7 +61,7 @@ export default function ReviewPage() {
 
   const fetchLogs = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/review/logs?limit=5`, { cache: "no-store" });
+      const res = await fetch(`${API_BASE_URL}/api/review/logs?limit=100`, { cache: "no-store" });
       if (!res.ok) throw new Error("Gagal mengambil log review");
       const json = await res.json();
       if (json.success) {
@@ -287,9 +288,20 @@ export default function ReviewPage() {
                 <Button 
                   className="w-full rounded-xl bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 mt-4 shadow-sm font-semibold" 
                   disabled={totalReviewed < 10}
+                  onClick={() => {
+                    if (totalReviewed >= 10) {
+                      setShowRetrainMsg(true);
+                      setTimeout(() => setShowRetrainMsg(false), 7000);
+                    }
+                  }}
                 >
                   {totalReviewed >= 10 ? "✨ Mulai Retraining Sekarang" : "Kumpulkan 10 Review untuk Retrain"}
                 </Button>
+                {showRetrainMsg && (
+                  <div className="mt-3 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-700 leading-relaxed animate-in fade-in duration-300">
+                    ✅ Data review siap! Buka file <strong>ml/fine_tuning_colab.ipynb</strong> di Google Colab dan unggah data review untuk melatih ulang model.
+                  </div>
+                )}
               </div>
             </div>
 
