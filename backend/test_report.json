@@ -1,0 +1,41 @@
+{
+  "timestamp": "2026-05-25T08:50:32.638745",
+  "total": 4,
+  "processed": 4,
+  "errors": 0,
+  "accuracy_percent": 50.0,
+  "results": [
+    {
+      "file": "0003faa8-4b27-4c65-bf42-6d9e352ca1a5___RS_Late.B 4946.JPG",
+      "ground_truth": "LATE BLIGHT",
+      "predicted": "LATE BLIGHT",
+      "confidence": 80.2,
+      "correct": true,
+      "is_mock": false
+    },
+    {
+      "file": "00355ec2-f12c-4015-b8f9-94354f69ce22___RS_Late.B 5311.JPG",
+      "ground_truth": "LATE BLIGHT",
+      "predicted": "LATE BLIGHT",
+      "confidence": 51.8,
+      "correct": true,
+      "is_mock": false
+    },
+    {
+      "file": "000146ff-92a4-4db6-90ad-8fce2ae4fddd___GH_HL Leaf 259.1.JPG",
+      "ground_truth": "SEHAT",
+      "predicted": "YELLOW LEAF CURL VIRUS",
+      "confidence": 55.8,
+      "correct": false,
+      "is_mock": false
+    },
+    {
+      "file": "000bf685-b305-408b-91f4-37030f8e62db___GH_HL Leaf 308.1.JPG",
+      "ground_truth": "SEHAT",
+      "predicted": "YELLOW LEAF CURL VIRUS",
+      "confidence": 69.3,
+      "correct": false,
+      "is_mock": false
+    }
+  ]
+}
