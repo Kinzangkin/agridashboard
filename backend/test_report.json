@@ -1,15 +1,47 @@
 {
-  "timestamp": "2026-05-25T08:50:32.638745",
-  "total": 4,
-  "processed": 4,
+  "timestamp": "2026-05-25T11:24:41.450231",
+  "total": 8,
+  "processed": 8,
   "errors": 0,
-  "accuracy_percent": 50.0,
+  "accuracy_percent": 75.0,
   "results": [
+    {
+      "file": "00416648-be6e-4bd4-bc8d-82f43f8a7240___GCREC_Bact.Sp_3110.JPG",
+      "ground_truth": "BACTERIAL SPOT",
+      "predicted": "SEHAT (KONDISI OPTIMAL)",
+      "confidence": 50.0,
+      "correct": false,
+      "is_mock": false
+    },
+    {
+      "file": "0045ba29-ed1b-43b4-afde-719cc7adefdb___GCREC_Bact.Sp_6254.JPG",
+      "ground_truth": "BACTERIAL SPOT",
+      "predicted": "BACTERIAL SPOT",
+      "confidence": 100.0,
+      "correct": true,
+      "is_mock": false
+    },
+    {
+      "file": "0012b9d2-2130-4a06-a834-b1f3af34f57e___RS_Erly.B_8389.JPG",
+      "ground_truth": "EARLY BLIGHT",
+      "predicted": "BACTERIAL SPOT",
+      "confidence": 63.6,
+      "correct": false,
+      "is_mock": false
+    },
+    {
+      "file": "0034a551-9512-44e5-ba6c-827f85ecc688___RS_Erly.B_9432.JPG",
+      "ground_truth": "EARLY BLIGHT",
+      "predicted": "EARLY BLIGHT",
+      "confidence": 94.0,
+      "correct": true,
+      "is_mock": false
+    },
     {
       "file": "0003faa8-4b27-4c65-bf42-6d9e352ca1a5___RS_Late.B 4946.JPG",
       "ground_truth": "LATE BLIGHT",
       "predicted": "LATE BLIGHT",
-      "confidence": 80.2,
+      "confidence": 98.6,
       "correct": true,
       "is_mock": false
     },
@@ -17,24 +49,24 @@
       "file": "00355ec2-f12c-4015-b8f9-94354f69ce22___RS_Late.B 5311.JPG",
       "ground_truth": "LATE BLIGHT",
       "predicted": "LATE BLIGHT",
-      "confidence": 51.8,
+      "confidence": 70.8,
       "correct": true,
       "is_mock": false
     },
     {
       "file": "000146ff-92a4-4db6-90ad-8fce2ae4fddd___GH_HL Leaf 259.1.JPG",
       "ground_truth": "SEHAT",
-      "predicted": "YELLOW LEAF CURL VIRUS",
-      "confidence": 55.8,
-      "correct": false,
+      "predicted": "SEHAT (KONDISI OPTIMAL)",
+      "confidence": 100.0,
+      "correct": true,
       "is_mock": false
     },
     {
       "file": "000bf685-b305-408b-91f4-37030f8e62db___GH_HL Leaf 308.1.JPG",
       "ground_truth": "SEHAT",
-      "predicted": "YELLOW LEAF CURL VIRUS",
-      "confidence": 69.3,
-      "correct": false,
+      "predicted": "SEHAT (KONDISI OPTIMAL)",
+      "confidence": 100.0,
+      "correct": true,
       "is_mock": false
     }
   ]

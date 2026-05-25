@@ -94,7 +94,7 @@ class SensorData(BaseModel):
 # ============================================================
 # Load Model (dijalankan SEKALI saat server start)
 # ============================================================
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "ml", "models", "tomato_model.h5")
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "ml", "models", "tomato_model (2).h5")
 model = None
 
 try:
@@ -259,10 +259,14 @@ def predict(image_bytes: bytes, lesion_ratio: float = 0.0):
     predictions = model.predict(img_array, verbose=0)
     probs = predictions[0]
 
-    # Ambil probabilitas untuk kelas SEHAT (index 9) dan penyakit terbaik (index 0-8)
-    sehat_prob = float(probs[9])
+    # --- MENDAPATKAN PREDIKSI ASLI DARI MODEL (SEMUA 10 KELAS) ---
+    best_class_idx = int(np.argmax(probs))
+    best_class_prob = float(probs[best_class_idx])
+    
+    # Ambil probabilitas penyakit tertinggi saja (untuk override later)
     best_disease_idx = int(np.argmax(probs[:9]))
     best_disease_prob = float(probs[best_disease_idx])
+    sehat_prob = float(probs[9])
 
     # --- KALIBRASI: BIAS KELAS SEHAT (HEALTHY BOOST FACTOR) ---
     # Mengalikan probabilitas SEHAT dengan faktor pengali agar model tidak gampang panik (false alarm).
@@ -278,7 +282,6 @@ def predict(image_bytes: bytes, lesion_ratio: float = 0.0):
         # --- KALIBRASI: OVERRIDE PENYAKIT AKIBAT NOISE (CONFIDENCE THRESHOLD & LESION CHECK) ---
         # 1. Overriding jika confidence penyakit sangat rendah (< 50%)
         # 2. Overriding jika fisik daun dominan bersih tanpa bercak cokelat/lesi (< 0.8% lesion_ratio)
-        #    Hanya berlaku untuk penyakit yang menyebabkan bercak cokelat/lesi fisik yang jelas.
         raw_disease_confidence = best_disease_prob * 100
         
         # Daftar index penyakit bercak cokelat/lesi (Bacterial Spot, Early Blight, Late Blight, Septoria, Target Spot)
@@ -300,10 +303,11 @@ def predict(image_bytes: bytes, lesion_ratio: float = 0.0):
             # Hitung kembali confidence SEHAT yang disesuaikan
             total = float(sum(probs[:9])) + boosted_sehat_prob
             calculated_conf = float((boosted_sehat_prob / total) * 100) if total > 0 else 0.0
-            confidence = max(calculated_conf, 50.0) # Hindari 0% confidence di UI jika di-override
+            confidence = max(calculated_conf, 50.0)
         else:
-            class_index = best_disease_idx
-            confidence = float(raw_disease_confidence)
+            # Gunakan prediksi murni dari model (karena dia sangat yakin dan bukan noise)
+            class_index = best_class_idx
+            confidence = best_class_prob * 100.0
 
     label = LABEL_MAP.get(class_index, "TIDAK DIKETAHUI")
     return label, round(float(confidence), 1), False  # is_mock = False
