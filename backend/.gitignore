@@ -1,0 +1,40 @@
+# Environment variables (RAHASIA - jangan pernah di-commit!)
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+venv/
+.venv/
+env/
+.Python
+
+# Virtual environment
+venv/
+
+# Test files & scratch
+test_images/
+scratch_detect.py
+scratch_predict.py
+test_model.py
+test_report.json
+webcam_uploader.py
+download_missing.py
+download_samples.py
+
+# ML fine-tuning notebook (besar & tidak perlu di server)
+ml/fine_tuning_colab.ipynb
+
+# Prisma cache
+prisma/__pycache__/
+
+# Static uploads (dibuat otomatis saat runtime)
+static/tomato-images/
+
+# Node (jika ada)
+node_modules/
+package-lock.json
