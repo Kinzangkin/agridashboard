@@ -1340,9 +1340,9 @@ export default function PredictionsPage() {
               </Button>
 
               {/* Left side: Image */}
-              <div className="md:w-1/2 relative h-64 md:h-auto bg-slate-100">
+              <div className="md:w-1/2 relative h-64 md:h-auto bg-slate-950 flex items-center justify-center">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={pred.imageUrl || "https://images.unsplash.com/photo-1592841200221-a6898f307baa?q=80&w=1200&auto=format&fit=crop"} alt="Detail" className="w-full h-full object-cover" />
+                <img src={pred.imageUrl || "https://images.unsplash.com/photo-1592841200221-a6898f307baa?q=80&w=1200&auto=format&fit=crop"} alt="Detail" className="max-w-full max-h-full object-contain" />
                 <div className="absolute bottom-4 left-4 glass px-3 py-1.5 rounded-full text-xs font-semibold text-slate-800">
                   PIC-{pred.id.slice(0, 5).toUpperCase()}
                 </div>
