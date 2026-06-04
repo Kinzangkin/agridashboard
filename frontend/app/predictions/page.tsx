@@ -19,6 +19,89 @@ interface PredictionRecord {
   createdAt: string;
 }
 
+function detectGreenLeaf(video: HTMLVideoElement, offscreenCanvas: HTMLCanvasElement) {
+  const ctx = offscreenCanvas.getContext('2d');
+  if (!ctx) return null;
+
+  const w = 160;
+  const h = 120;
+  offscreenCanvas.width = w;
+  offscreenCanvas.height = h;
+
+  // Draw video frame to small canvas
+  ctx.drawImage(video, 0, 0, w, h);
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const data = imgData.data;
+
+  let minX = w;
+  let maxX = 0;
+  let minY = h;
+  let maxY = 0;
+  let greenPixelCount = 0;
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const idx = (y * w + x) * 4;
+      const r = data[idx];
+      const g = data[idx + 1];
+      const b = data[idx + 2];
+
+      // Convert RGB to HSV
+      const rP = r / 255;
+      const gP = g / 255;
+      const bP = b / 255;
+
+      const cMax = Math.max(rP, gP, bP);
+      const cMin = Math.min(rP, gP, bP);
+      const delta = cMax - cMin;
+
+      // Hue
+      let hue = 0;
+      if (delta !== 0) {
+        if (cMax === rP) {
+          hue = 60 * (((gP - bP) / delta) % 6);
+        } else if (cMax === gP) {
+          hue = 60 * (((bP - rP) / delta) + 2);
+        } else if (cMax === bP) {
+          hue = 60 * (((rP - gP) / delta) + 4);
+        }
+      }
+      if (hue < 0) hue += 360;
+
+      // OpenCV H scale is 0-179, so we divide hue by 2
+      const hOpenCV = hue / 2;
+
+      // Saturation
+      const sOpenCV = cMax === 0 ? 0 : (delta / cMax) * 255;
+
+      // Value
+      const vOpenCV = cMax * 255;
+
+      // Check green range: H in [25, 90], S > 40, V > 40
+      if (hOpenCV >= 25 && hOpenCV <= 90 && sOpenCV > 40 && vOpenCV > 40) {
+        greenPixelCount++;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+
+  // Minimum 1.5% of pixels must be green
+  const minGreenPixels = 0.015 * w * h; // 1.5% of 19200 = 288 pixels
+  if (greenPixelCount > minGreenPixels) {
+    return {
+      x: minX / w,
+      y: minY / h,
+      w: (maxX - minX) / w,
+      h: (maxY - minY) / h
+    };
+  }
+
+  return null;
+}
+
 export default function PredictionsPage() {
   const [selectedItem, setSelectedItem] = useState<number | null>(null);
 
@@ -38,6 +121,9 @@ export default function PredictionsPage() {
   const [currentDeviceIndex, setCurrentDeviceIndex] = useState<number>(0);
   const [countdown, setCountdown] = useState<number | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
+  const smoothedBoxRef = useRef<{x: number, y: number, w: number, h: number} | null>(null);
+  const boxOpacityRef = useRef<number>(0);
 
   // --- State for Predictions Gallery ---
   const [predictions, setPredictions] = useState<PredictionRecord[]>([]);
@@ -84,6 +170,180 @@ export default function PredictionsPage() {
       }
     };
   }, [stream]);
+
+  // Real-time client-side leaf detection and tracking overlay
+  useEffect(() => {
+    if (!isWebcamActive) {
+      if (overlayCanvasRef.current) {
+        const ctx = overlayCanvasRef.current.getContext("2d");
+        ctx?.clearRect(0, 0, overlayCanvasRef.current.width, overlayCanvasRef.current.height);
+      }
+      smoothedBoxRef.current = null;
+      boxOpacityRef.current = 0;
+      return;
+    }
+
+    let active = true;
+    const offscreenCanvas = document.createElement("canvas");
+    const video = videoRef.current;
+    if (!video) return;
+
+    const loop = () => {
+      if (!active) return;
+      
+      if (!video || video.paused || video.ended) {
+        requestAnimationFrame(loop);
+        return;
+      }
+
+      const canvas = overlayCanvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          // Sync canvas size
+          const rect = canvas.getBoundingClientRect();
+          if (canvas.width !== rect.width || canvas.height !== rect.height) {
+            canvas.width = rect.width;
+            canvas.height = rect.height;
+          }
+
+          const newBox = detectGreenLeaf(video, offscreenCanvas);
+
+          if (newBox) {
+            boxOpacityRef.current = Math.min(boxOpacityRef.current + 0.1, 1);
+            if (!smoothedBoxRef.current) {
+              smoothedBoxRef.current = { ...newBox };
+            } else {
+              smoothedBoxRef.current.x += (newBox.x - smoothedBoxRef.current.x) * 0.15;
+              smoothedBoxRef.current.y += (newBox.y - smoothedBoxRef.current.y) * 0.15;
+              smoothedBoxRef.current.w += (newBox.w - smoothedBoxRef.current.w) * 0.15;
+              smoothedBoxRef.current.h += (newBox.h - smoothedBoxRef.current.h) * 0.15;
+            }
+          } else {
+            boxOpacityRef.current = Math.max(boxOpacityRef.current - 0.08, 0);
+          }
+
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+          if (smoothedBoxRef.current && boxOpacityRef.current > 0) {
+            const videoWidth = video.videoWidth || 640;
+            const videoHeight = video.videoHeight || 480;
+            const containerWidth = canvas.width;
+            const containerHeight = canvas.height;
+
+            const videoRatio = videoWidth / videoHeight;
+            const containerRatio = containerWidth / containerHeight;
+
+            let scale;
+            let xOffset = 0;
+            let yOffset = 0;
+
+            if (containerRatio > videoRatio) {
+              scale = containerWidth / videoWidth;
+              yOffset = (containerHeight - videoHeight * scale) / 2;
+            } else {
+              scale = containerHeight / videoHeight;
+              xOffset = (containerWidth - videoWidth * scale) / 2;
+            }
+
+            const ix = smoothedBoxRef.current.x * videoWidth;
+            const iy = smoothedBoxRef.current.y * videoHeight;
+            const iw = smoothedBoxRef.current.w * videoWidth;
+            const ih = smoothedBoxRef.current.h * videoHeight;
+
+            const cX = ix * scale + xOffset;
+            const cY = iy * scale + yOffset;
+            const cW = iw * scale;
+            const cH = ih * scale;
+
+            ctx.save();
+            ctx.globalAlpha = boxOpacityRef.current;
+            
+            // Draw corners
+            ctx.strokeStyle = '#10B981'; // emerald-500
+            ctx.lineWidth = 3;
+            ctx.shadowColor = '#10B981';
+            ctx.shadowBlur = 8;
+
+            const cornerLength = Math.min(20, cW / 4, cH / 4);
+
+            // Top-Left
+            ctx.beginPath();
+            ctx.moveTo(cX + cornerLength, cY);
+            ctx.lineTo(cX, cY);
+            ctx.lineTo(cX, cY + cornerLength);
+            ctx.stroke();
+
+            // Top-Right
+            ctx.beginPath();
+            ctx.moveTo(cX + cW - cornerLength, cY);
+            ctx.lineTo(cX + cW, cY);
+            ctx.lineTo(cX + cW, cY + cornerLength);
+            ctx.stroke();
+
+            // Bottom-Left
+            ctx.beginPath();
+            ctx.moveTo(cX + cornerLength, cY + cH);
+            ctx.lineTo(cX, cY + cH);
+            ctx.lineTo(cX, cY + cH - cornerLength);
+            ctx.stroke();
+
+            // Bottom-Right
+            ctx.beginPath();
+            ctx.moveTo(cX + cW - cornerLength, cY + cH);
+            ctx.lineTo(cX + cW, cY + cH);
+            ctx.lineTo(cX + cW, cY + cH - cornerLength);
+            ctx.stroke();
+
+            // Outline
+            ctx.strokeStyle = 'rgba(16, 185, 129, 0.2)';
+            ctx.lineWidth = 1;
+            ctx.shadowBlur = 0;
+            ctx.strokeRect(cX, cY, cW, cH);
+
+            // Fill
+            ctx.fillStyle = 'rgba(16, 185, 129, 0.02)';
+            ctx.fillRect(cX, cY, cW, cH);
+
+            // Badge
+            ctx.fillStyle = '#10B981';
+            ctx.shadowColor = 'rgba(0,0,0,0.1)';
+            ctx.shadowBlur = 4;
+            
+            const text = "DAUN TOMAT";
+            ctx.font = "bold 9px sans-serif";
+            const textWidth = ctx.measureText(text).width;
+            
+            if (ctx.roundRect) {
+              ctx.beginPath();
+              ctx.roundRect(cX, cY - 18, textWidth + 12, 14, 4);
+              ctx.fill();
+            } else {
+              ctx.fillRect(cX, cY - 18, textWidth + 12, 14);
+            }
+
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillText(text, cX + 6, cY - 8);
+
+            ctx.restore();
+          }
+        }
+      }
+
+      requestAnimationFrame(loop);
+    };
+
+    if (video.readyState >= 1) {
+      loop();
+    } else {
+      video.addEventListener("loadedmetadata", loop);
+    }
+
+    return () => {
+      active = false;
+      video.removeEventListener("loadedmetadata", loop);
+    };
+  }, [isWebcamActive]);
 
   // Handler untuk Buka Webcam di Browser
   const startWebcam = async (deviceIndex: number = 0) => {
@@ -434,6 +694,10 @@ export default function PredictionsPage() {
                       muted
                       controls={false}
                       className="w-full h-full object-cover"
+                    />
+                    <canvas
+                      ref={overlayCanvasRef}
+                      className="absolute inset-0 w-full h-full pointer-events-none z-10"
                     />
 
                     {/* Countdown Badge — pojok kiri atas */}
