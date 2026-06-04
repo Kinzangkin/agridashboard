@@ -293,75 +293,13 @@ export default function PredictionsPage() {
         risk: "Nihil (Sangat Baik)",
         color: "text-emerald-700 bg-emerald-50/80 border-emerald-200"
       };
-    } else if (statusUpper.includes("EARLY BLIGHT")) {
-      return {
-        desc: "Terdeteksi bercak cokelat dengan cincin konsentris di daun bagian bawah (Gejala awal Alternaria solani). Jika dibiarkan, daun akan menguning dan rontok dalam 3-5 hari ke depan.",
-        action: "1. Pangkas segera daun yang terinfeksi dan jauhkan dari kebun.\n2. Pastikan sirkulasi udara baik (kipas menyala).\n3. Aplikasikan fungisida (Mankozeb/Klorotalonil) besok pagi.",
-        risk: "Sedang",
-        color: "text-amber-700 bg-amber-50 border-amber-200"
-      };
-    } else if (statusUpper.includes("LATE BLIGHT")) {
-      return {
-        desc: "Infeksi agresif terdeteksi (Phytophthora infestans). Tanaman berisiko mati total dalam 24-48 jam jika kondisi lembap terus berlanjut.",
-        action: "1. Karantina/cabut tanaman yang sudah parah agar tidak menular.\n2. Kurangi kelembapan ruangan segera di bawah 60%.\n3. Semprotkan fungisida sistemik secara menyeluruh.",
-        risk: "Sangat Tinggi",
-        color: "text-rose-700 bg-rose-50 border-rose-200"
-      };
-    } else if (statusUpper.includes("BACTERIAL")) {
-      return {
-        desc: "Bercak air pada daun, batang, atau buah yang disebabkan bakteri Xanthomonas campestris. Menyebar cepat melalui percikan air.",
-        action: "1. Hindari penyiraman dari atas (gunakan irigasi tetes).\n2. Semprotkan bakterisida berbahan tembaga.\n3. Buang dan musnahkan daun yang terinfeksi parah.",
-        risk: "Tinggi",
-        color: "text-orange-700 bg-orange-50 border-orange-200"
-      };
-    } else if (statusUpper.includes("SEPTORIA")) {
-      return {
-        desc: "Bercak kecil bulat berwarna cokelat dengan titik hitam di tengahnya (Septoria lycopersici). Biasa menyerang daun tua lebih dahulu.",
-        action: "1. Pangkas daun terinfeksi dari bawah ke atas.\n2. Jaga jarak tanam agar sirkulasi udara baik.\n3. Aplikasikan fungisida berbahan Klorotalonil.",
-        risk: "Sedang",
-        color: "text-amber-700 bg-amber-50 border-amber-200"
-      };
-    } else if (statusUpper.includes("LEAF MOLD")) {
-      return {
-        desc: "Jamur Fulvia fulva menyebabkan bercak kuning di permukaan atas daun dan lapisan jamur abu-abu di bawahnya. Berkembang di kelembapan tinggi.",
-        action: "1. Turunkan kelembapan di bawah 70%.\n2. Tingkatkan sirkulasi udara.\n3. Semprotkan fungisida sistemik.",
-        risk: "Sedang",
-        color: "text-amber-700 bg-amber-50 border-amber-200"
-      };
-    } else if (statusUpper.includes("SPIDER")) {
-      return {
-        desc: "Tungau laba-laba (Tetranychus urticae) menyebabkan daun memutih/menguning dengan bintik-bintik kecil. Sering terjadi di musim kemarau.",
-        action: "1. Semprotkan air pada daun untuk mengurangi populasi tungau.\n2. Aplikasikan akarisida atau pestisida nabati.\n3. Jaga kelembapan tanah yang cukup.",
-        risk: "Sedang",
-        color: "text-yellow-700 bg-yellow-50 border-yellow-200"
-      };
-    } else if (statusUpper.includes("TARGET")) {
-      return {
-        desc: "Bercak target (Corynespora cassiicola) — lingkaran konsentris mirip sasaran panah pada daun, batang, dan buah.",
-        action: "1. Rotasi tanaman di musim tanam berikutnya.\n2. Aplikasikan fungisida yang direkomendasikan.\n3. Buang sisa tanaman yang terinfeksi.",
-        risk: "Sedang-Tinggi",
-        color: "text-orange-700 bg-orange-50 border-orange-200"
-      };
-    } else if (statusUpper.includes("YELLOW LEAF") || statusUpper.includes("CURL")) {
-      return {
-        desc: "Virus Yellow Leaf Curl yang dibawa kutu kebul (Bemisia tabaci). Daun mengkerut, menguning, dan pertumbuhan terhenti.",
-        action: "1. Kendalikan populasi kutu kebul dengan insektisida.\n2. Pasang perangkap kuning di sekitar tanaman.\n3. Cabut dan musnahkan tanaman yang terinfeksi parah untuk mencegah penyebaran.",
-        risk: "Sangat Tinggi",
-        color: "text-rose-700 bg-rose-50 border-rose-200"
-      };
-    } else if (statusUpper.includes("MOSAIC")) {
-      return {
-        desc: "Virus mosaik tomat (ToMV) menyebabkan pola warna berbintik-bintik pada daun dan buah. Menyebar melalui kontak langsung dan alat berkebun.",
-        action: "1. Sterilkan semua alat berkebun sebelum digunakan.\n2. Cuci tangan sebelum menyentuh tanaman.\n3. Cabut tanaman yang sangat terinfeksi.",
-        risk: "Tinggi",
-        color: "text-rose-700 bg-rose-50 border-rose-200"
-      };
     } else {
+      // General Output for any detected disease
       return {
-        desc: "Kondisi tanaman memerlukan perhatian lebih lanjut dari ahli agronomi.",
-        action: "Lakukan pemeriksaan visual secara menyeluruh dan konsultasikan dengan ahli pertanian.",
-        risk: "Tidak Diketahui",
-        color: "text-slate-700 bg-slate-50 border-slate-200"
+        desc: `Sistem mendeteksi adanya gejala penyakit pada daun (${status}). Segera lakukan tindakan pencegahan agar penyakit tidak menular ke tanaman lainnya.`,
+        action: "1. Pisahkan/isolasi tanaman yang terinfeksi dari tanaman yang sehat.\n2. Pangkas dan buang bagian daun yang menunjukkan bercak atau layu.\n3. Bersihkan alat pertanian sebelum dan sesudah menyentuh tanaman.\n4. Lakukan penyiraman langsung pada tanah (hindari menyiram permukaan daun untuk mengurangi kelembapan jamur).\n5. Konsultasikan dengan penyuluh pertanian atau gunakan fungisida/bakterisida umum jika infeksi meluas.",
+        risk: "Sedang - Tinggi (Memerlukan Tindakan)",
+        color: "text-rose-700 bg-rose-50 border-rose-200"
       };
     }
   };
