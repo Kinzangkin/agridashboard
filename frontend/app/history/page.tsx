@@ -86,14 +86,7 @@ export default function HistoryPage() {
           <h1 className="text-2xl font-bold text-slate-800">Riwayat Data & Sensor</h1>
           <p className="text-slate-600 mt-1">Log periodik suhu, kelembapan, dan hasil snapshot kamera ESP32.</p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" className="glass rounded-full border border-white/60 text-slate-600">
-            <Filter size={16} className="mr-2" /> Filter
-          </Button>
-          <Button variant="outline" className="glass rounded-full border border-white/60 text-slate-600">
-            <Download size={16} className="mr-2" /> Export CSV
-          </Button>
-        </div>
+
       </div>
 
       <div className="glass rounded-[32px] p-6 border border-white/60 shadow-sm flex-1 flex flex-col">

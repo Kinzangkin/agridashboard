@@ -13,16 +13,7 @@ export function TopBar() {
         <h1 className="text-xl font-bold text-slate-800 tracking-tight">TomatoHealth AI</h1>
       </div>
 
-      {/* Middle: Search */}
-      <div className="hidden md:flex items-center glass rounded-full px-4 py-2 w-96 shadow-sm border border-white/60">
-        <Search className="text-slate-400 h-4 w-4 mr-2" />
-        <input 
-          type="text" 
-          placeholder="Search..." 
-          className="bg-transparent border-none outline-none text-sm w-full placeholder:text-slate-400 text-slate-700"
-        />
-        <Mic className="text-slate-400 h-4 w-4 ml-2 cursor-pointer hover:text-slate-700" />
-      </div>
+
 
       {/* Right: Actions */}
       <div className="flex items-center gap-3">
