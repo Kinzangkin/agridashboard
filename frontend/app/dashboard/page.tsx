@@ -482,10 +482,10 @@ export default function DashboardPage() {
             ctx.globalAlpha = boxOpacityRef.current;
             
             // Draw corners
-            ctx.strokeStyle = '#10B981'; // emerald-500
-            ctx.lineWidth = 3;
-            ctx.shadowColor = '#10B981';
-            ctx.shadowBlur = 8;
+            ctx.strokeStyle = '#00FF00'; // Pure bright green
+            ctx.lineWidth = 6;
+            ctx.shadowColor = '#00FF00';
+            ctx.shadowBlur = 12;
 
             const cornerLength = Math.min(20, cW / 4, cH / 4);
 
