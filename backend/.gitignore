@@ -38,3 +38,9 @@ static/tomato-images/
 # Node (jika ada)
 node_modules/
 package-lock.json
+
+# Unused ML models (only tomato_model (2).h5 is used)
+ml/models/tomato_model.h5
+ml/models/tomato_modelv1.h5
+ml/models/tomato_modelv2.h5
+

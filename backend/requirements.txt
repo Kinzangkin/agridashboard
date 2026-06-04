@@ -7,3 +7,5 @@ prisma
 pydantic
 python-multipart
 python-dotenv
+opencv-python-headless
+requests

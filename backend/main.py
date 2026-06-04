@@ -97,9 +97,15 @@ class SensorData(BaseModel):
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "ml", "models", "tomato_model (2).h5")
 model = None
 
+# Patch Dense layer to support loading Keras 3 models in Keras 2 environments (unrecognized quantization_config)
+class PatchedDense(tf.keras.layers.Dense):
+    def __init__(self, *args, **kwargs):
+        kwargs.pop('quantization_config', None)
+        super().__init__(*args, **kwargs)
+
 try:
     print(f"[LOADING] Memuat model dari: {MODEL_PATH}")
-    model = tf.keras.models.load_model(MODEL_PATH)
+    model = tf.keras.models.load_model(MODEL_PATH, custom_objects={'Dense': PatchedDense})
     print("[OK] Model berhasil dimuat!")
 except Exception as e:
     print(f"[WARNING] Model gagal dimuat: {e}")
@@ -359,10 +365,10 @@ async def receive_sensor_data(data: SensorData):
             }
         )
 
-        # --- STRATEGI A: FIFO Quota Limit (Maks 100 Sensor Readings) ---
+        # --- STRATEGI A: FIFO Quota Limit (Maks 1000 Sensor Readings) ---
         total_readings = await db.sensorreading.count()
-        if total_readings > 100:
-            excess_count = total_readings - 100
+        if total_readings > 1000:
+            excess_count = total_readings - 1000
             old_readings = await db.sensorreading.find_many(
                 take=excess_count,
                 order={"createdAt": "asc"}
@@ -690,10 +696,10 @@ async def upload_and_predict(
                 data={"status": disease_label},
             )
 
-            # --- STRATEGI A: FIFO Quota Limit (Maks 100 Prediksi Teratas) ---
+            # --- STRATEGI A: FIFO Quota Limit (Maks 1000 Prediksi Teratas) ---
             total_predictions = await db.prediction.count()
-            if total_predictions > 100:
-                excess_count = total_predictions - 100
+            if total_predictions > 1000:
+                excess_count = total_predictions - 1000
                 old_preds = await db.prediction.find_many(
                     take=excess_count,
                     order={"createdAt": "asc"}
