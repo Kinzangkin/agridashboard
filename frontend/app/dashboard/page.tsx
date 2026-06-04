@@ -93,8 +93,8 @@ function detectGreenLeaf(video: HTMLVideoElement, offscreenCanvas: HTMLCanvasEle
     }
   }
 
-  // Minimum 1.5% of pixels must be green
-  const minGreenPixels = 0.015 * w * h; // 1.5% of 19200 = 288 pixels
+  // Minimum 0.5% of pixels must be green
+  const minGreenPixels = 0.005 * w * h; // 0.5% of 19200 = 96 pixels
   if (greenPixelCount > minGreenPixels) {
     return {
       x: minX / w,
@@ -848,7 +848,7 @@ export default function DashboardPage() {
                       </div>
                       <div className="flex-1">
                         <p className={`text-xs font-bold ${currentWebcamIndex === 1 ? "text-emerald-800" : "text-slate-700"}`}>
-                          Webcam Eksternal USB
+                          Webcam laptop
                         </p>
                         <p className="text-[10px] text-slate-400">Kamera Tambahan / Kabel USB</p>
                       </div>
@@ -874,7 +874,7 @@ export default function DashboardPage() {
                       </div>
                       <div className="flex-1">
                         <p className={`text-xs font-bold ${currentWebcamIndex === 0 ? "text-emerald-800" : "text-slate-700"}`}>
-                          Webcam Bawaan Laptop
+                          Webcam external
                         </p>
                         <p className="text-[10px] text-slate-400">Kamera Internal / Built-in</p>
                       </div>

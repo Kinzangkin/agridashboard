@@ -88,8 +88,8 @@ function detectGreenLeaf(video: HTMLVideoElement, offscreenCanvas: HTMLCanvasEle
     }
   }
 
-  // Minimum 1.5% of pixels must be green
-  const minGreenPixels = 0.015 * w * h; // 1.5% of 19200 = 288 pixels
+  // Minimum 0.5% of pixels must be green
+  const minGreenPixels = 0.005 * w * h; // 0.5% of 19200 = 96 pixels
   if (greenPixelCount > minGreenPixels) {
     return {
       x: minX / w,
@@ -514,6 +514,180 @@ export default function PredictionsPage() {
 
     return () => clearTimeout(timer);
   }, [countdown, silentCaptureAndUpload]);
+
+  // Real-time client-side leaf detection and tracking overlay
+  useEffect(() => {
+    if (!isWebcamActive) {
+      if (overlayCanvasRef.current) {
+        const ctx = overlayCanvasRef.current.getContext("2d");
+        ctx?.clearRect(0, 0, overlayCanvasRef.current.width, overlayCanvasRef.current.height);
+      }
+      smoothedBoxRef.current = null;
+      boxOpacityRef.current = 0;
+      return;
+    }
+
+    let active = true;
+    const offscreenCanvas = document.createElement("canvas");
+    const video = videoRef.current;
+    if (!video) return;
+
+    const loop = () => {
+      if (!active) return;
+      
+      if (!video || video.paused || video.ended) {
+        requestAnimationFrame(loop);
+        return;
+      }
+
+      const canvas = overlayCanvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          // Sync canvas size
+          const rect = canvas.getBoundingClientRect();
+          if (canvas.width !== rect.width || canvas.height !== rect.height) {
+            canvas.width = rect.width;
+            canvas.height = rect.height;
+          }
+
+          const newBox = detectGreenLeaf(video, offscreenCanvas);
+
+          if (newBox) {
+            boxOpacityRef.current = Math.min(boxOpacityRef.current + 0.1, 1);
+            if (!smoothedBoxRef.current) {
+              smoothedBoxRef.current = { ...newBox };
+            } else {
+              smoothedBoxRef.current.x += (newBox.x - smoothedBoxRef.current.x) * 0.15;
+              smoothedBoxRef.current.y += (newBox.y - smoothedBoxRef.current.y) * 0.15;
+              smoothedBoxRef.current.w += (newBox.w - smoothedBoxRef.current.w) * 0.15;
+              smoothedBoxRef.current.h += (newBox.h - smoothedBoxRef.current.h) * 0.15;
+            }
+          } else {
+            boxOpacityRef.current = Math.max(boxOpacityRef.current - 0.08, 0);
+          }
+
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+          if (smoothedBoxRef.current && boxOpacityRef.current > 0) {
+            const videoWidth = video.videoWidth || 640;
+            const videoHeight = video.videoHeight || 480;
+            const containerWidth = canvas.width;
+            const containerHeight = canvas.height;
+
+            const videoRatio = videoWidth / videoHeight;
+            const containerRatio = containerWidth / containerHeight;
+
+            let scale;
+            let xOffset = 0;
+            let yOffset = 0;
+
+            if (containerRatio > videoRatio) {
+              scale = containerWidth / videoWidth;
+              yOffset = (containerHeight - videoHeight * scale) / 2;
+            } else {
+              scale = containerHeight / videoHeight;
+              xOffset = (containerWidth - videoWidth * scale) / 2;
+            }
+
+            const ix = smoothedBoxRef.current.x * videoWidth;
+            const iy = smoothedBoxRef.current.y * videoHeight;
+            const iw = smoothedBoxRef.current.w * videoWidth;
+            const ih = smoothedBoxRef.current.h * videoHeight;
+
+            const cX = ix * scale + xOffset;
+            const cY = iy * scale + yOffset;
+            const cW = iw * scale;
+            const cH = ih * scale;
+
+            ctx.save();
+            ctx.globalAlpha = boxOpacityRef.current;
+            
+            // Draw corners
+            ctx.strokeStyle = '#00FF00'; // Pure bright green
+            ctx.lineWidth = 6;
+            ctx.shadowColor = '#00FF00';
+            ctx.shadowBlur = 12;
+
+            const cornerLength = Math.min(20, cW / 4, cH / 4);
+
+            // Top-Left
+            ctx.beginPath();
+            ctx.moveTo(cX + cornerLength, cY);
+            ctx.lineTo(cX, cY);
+            ctx.lineTo(cX, cY + cornerLength);
+            ctx.stroke();
+
+            // Top-Right
+            ctx.beginPath();
+            ctx.moveTo(cX + cW - cornerLength, cY);
+            ctx.lineTo(cX + cW, cY);
+            ctx.lineTo(cX + cW, cY + cornerLength);
+            ctx.stroke();
+
+            // Bottom-Left
+            ctx.beginPath();
+            ctx.moveTo(cX + cornerLength, cY + cH);
+            ctx.lineTo(cX, cY + cH);
+            ctx.lineTo(cX, cY + cH - cornerLength);
+            ctx.stroke();
+
+            // Bottom-Right
+            ctx.beginPath();
+            ctx.moveTo(cX + cW - cornerLength, cY + cH);
+            ctx.lineTo(cX + cW, cY + cH);
+            ctx.lineTo(cX + cW, cY + cH - cornerLength);
+            ctx.stroke();
+
+            // Outline
+            ctx.strokeStyle = 'rgba(16, 185, 129, 0.2)';
+            ctx.lineWidth = 1;
+            ctx.shadowBlur = 0;
+            ctx.strokeRect(cX, cY, cW, cH);
+
+            // Fill
+            ctx.fillStyle = 'rgba(16, 185, 129, 0.02)';
+            ctx.fillRect(cX, cY, cW, cH);
+
+            // Badge
+            ctx.fillStyle = '#10B981';
+            ctx.shadowColor = 'rgba(0,0,0,0.1)';
+            ctx.shadowBlur = 4;
+            
+            const text = "DAUN TOMAT";
+            ctx.font = "bold 9px sans-serif";
+            const textWidth = ctx.measureText(text).width;
+            
+            if (ctx.roundRect) {
+              ctx.beginPath();
+              ctx.roundRect(cX, cY - 18, textWidth + 12, 14, 4);
+              ctx.fill();
+            } else {
+              ctx.fillRect(cX, cY - 18, textWidth + 12, 14);
+            }
+
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillText(text, cX + 6, cY - 8);
+
+            ctx.restore();
+          }
+        }
+      }
+
+      requestAnimationFrame(loop);
+    };
+
+    if (video.readyState >= 1) {
+      loop();
+    } else {
+      video.addEventListener("loadedmetadata", loop);
+    }
+
+    return () => {
+      active = false;
+      video.removeEventListener("loadedmetadata", loop);
+    };
+  }, [isWebcamActive]);
 
   const filteredPredictions = predictions.filter((p) => {
     const shortId = `PIC-${p.id.slice(0, 5).toUpperCase()}`;
