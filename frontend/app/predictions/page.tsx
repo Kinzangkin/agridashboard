@@ -44,18 +44,23 @@ export default function PredictionsPage() {
   const [isGalleryLoading, setIsGalleryLoading] = useState<boolean>(true);
   const [galleryError, setGalleryError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [galleryPage, setGalleryPage] = useState<number>(1);
+  const [galleryTotal, setGalleryTotal] = useState<number>(0);
+  const GALLERY_PER_PAGE = 12;
 
-  const fetchPredictions = async () => {
+  const fetchPredictions = async (page: number = galleryPage) => {
     try {
       setIsGalleryLoading(true);
       setGalleryError(null);
-      const res = await fetch(`${API_BASE_URL}/api/predictions?limit=50`, { cache: "no-store" });
+      const skip = (page - 1) * GALLERY_PER_PAGE;
+      const res = await fetch(`${API_BASE_URL}/api/predictions?limit=${GALLERY_PER_PAGE}&skip=${skip}`, { cache: "no-store" });
       if (!res.ok) {
         throw new Error(`HTTP error! status: ${res.status}`);
       }
       const json = await res.json();
       if (json.success) {
         setPredictions(json.data);
+        setGalleryTotal(json.total ?? json.data.length);
       } else {
         setGalleryError(json.error || "Gagal memuat galeri prediksi.");
       }
@@ -68,8 +73,8 @@ export default function PredictionsPage() {
   };
 
   useEffect(() => {
-    fetchPredictions();
-  }, []);
+    fetchPredictions(galleryPage);
+  }, [galleryPage]);
 
   // Cleanup webcam stream on unmount
   useEffect(() => {
@@ -222,7 +227,8 @@ export default function PredictionsPage() {
 
               if (response.success) {
                 setTestResult(response);
-                fetchPredictions();
+                setGalleryPage(1);
+                fetchPredictions(1);
               }
             } catch (err) {
               console.error("Gagal mengirim tangkapan otomatis:", err);
@@ -333,7 +339,8 @@ export default function PredictionsPage() {
 
     // Refresh galeri secara otomatis jika prediksi sukses
     if (response.success) {
-      fetchPredictions();
+      setGalleryPage(1);
+      fetchPredictions(1);
     }
 
     // Update localStorage agar Dashboard dapat mendeteksi perubahan
@@ -705,13 +712,65 @@ export default function PredictionsPage() {
         </div>
       )}
 
-      {!isGalleryLoading && !galleryError && filteredPredictions.length > 0 && (
-        <div className="flex justify-center mt-4">
-          <Button onClick={fetchPredictions} variant="outline" className="glass rounded-full px-8 py-2 border border-white/60 text-slate-600 hover:bg-white/50">
-            Segarkan Galeri
-          </Button>
-        </div>
-      )}
+      {!isGalleryLoading && !galleryError && filteredPredictions.length > 0 && (() => {
+        const totalPages = Math.max(1, Math.ceil(galleryTotal / GALLERY_PER_PAGE));
+        const startItem = galleryTotal === 0 ? 0 : (galleryPage - 1) * GALLERY_PER_PAGE + 1;
+        const endItem = Math.min(galleryPage * GALLERY_PER_PAGE, galleryTotal);
+
+        const pages: number[] = [];
+        let startPage = Math.max(1, galleryPage - 2);
+        let endPage = Math.min(totalPages, startPage + 4);
+        if (endPage - startPage < 4) {
+          startPage = Math.max(1, endPage - 4);
+        }
+        for (let i = startPage; i <= endPage; i++) {
+          pages.push(i);
+        }
+
+        return (
+          <div className="flex flex-col sm:flex-row justify-between items-center mt-6 gap-4">
+            <span className="text-sm text-slate-500">Menampilkan {startItem}–{endItem} dari {galleryTotal} prediksi</span>
+            <div className="flex gap-1 items-center">
+              <Button
+                variant="outline"
+                size="sm"
+                className="glass rounded-full h-8 px-3 border-white/60"
+                disabled={galleryPage <= 1}
+                onClick={() => setGalleryPage((p) => Math.max(1, p - 1))}
+              >
+                Prev
+              </Button>
+              {pages.map((p) => (
+                <Button
+                  key={p}
+                  variant="outline"
+                  size="sm"
+                  className={`glass rounded-full h-8 px-3 border-white/60 ${p === galleryPage ? 'bg-white/80 font-bold text-emerald-700' : ''}`}
+                  onClick={() => setGalleryPage(p)}
+                >
+                  {p}
+                </Button>
+              ))}
+              <Button
+                variant="outline"
+                size="sm"
+                className="glass rounded-full h-8 px-3 border-white/60"
+                disabled={galleryPage >= totalPages}
+                onClick={() => setGalleryPage((p) => Math.min(totalPages, p + 1))}
+              >
+                Next
+              </Button>
+              <Button
+                onClick={() => fetchPredictions(galleryPage)}
+                variant="outline"
+                className="glass rounded-full h-8 px-4 border-white/60 text-slate-600 hover:bg-white/50 ml-2"
+              >
+                Segarkan
+              </Button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Modal Detail */}
       {selectedItem !== null && filteredPredictions[selectedItem] && (() => {

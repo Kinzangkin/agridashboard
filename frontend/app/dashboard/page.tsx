@@ -28,6 +28,7 @@ export default function DashboardPage() {
   const placeholderImg = "https://images.unsplash.com/photo-1592841200221-a6898f307baa?q=80&w=1200&auto=format&fit=crop";
   const [isBackendOnline, setIsBackendOnline] = useState<boolean | null>(null);
   const [sensorData, setSensorData] = useState<SensorReading[]>([]);
+  const [totalSensor, setTotalSensor] = useState<number>(0);
   const [latestReading, setLatestReading] = useState<SensorReading | null>(null);
   const [latestPrediction, setLatestPrediction] = useState<PredictionRecord | null>(null);
 
@@ -50,6 +51,7 @@ export default function DashboardPage() {
       const json = await res.json();
       if (json.success && json.data.length > 0) {
         setSensorData(json.data);
+        setTotalSensor(json.total ?? json.data.length);
         setLatestReading(json.data[0]); // data[0] = terbaru
       }
     } catch (e) {
@@ -679,7 +681,7 @@ export default function DashboardPage() {
             <ArrowUpRight size={16} className="text-slate-600" />
           </div>
         </div>
-        <div className="text-3xl font-bold text-slate-800 mb-1">{sensorData.length} <span className="text-sm font-medium text-slate-500">Pembacaan</span></div>
+        <div className="text-3xl font-bold text-slate-800 mb-1">{totalSensor} <span className="text-sm font-medium text-slate-500">Pembacaan</span></div>
         <div className="flex-1 mt-6 flex items-end gap-1.5 h-24">
           {(sensorData.length > 0 ? tempBars : [40, 60, 45, 80, 50, 90, 70, 85, 60, 75].map((h) => ({ temperature: h * 0.4 } as SensorReading))).map((r, i) => (
             <div key={i} className="flex-1 bg-linear-to-t from-emerald-400 to-emerald-200 rounded-t-sm" style={{ height: `${Math.min((r.temperature / maxTemp) * 100, 100)}%` }}></div>

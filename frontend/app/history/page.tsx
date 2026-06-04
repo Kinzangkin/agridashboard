@@ -21,19 +21,24 @@ export default function HistoryPage() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [totalItems, setTotalItems] = useState<number>(0);
+  const ITEMS_PER_PAGE = 20;
 
   useEffect(() => {
     async function fetchHistory() {
       try {
         setIsLoading(true);
         setError(null);
-        const res = await fetch(`${API_BASE_URL}/api/sensor?limit=100`, { cache: "no-store" });
+        const skip = (currentPage - 1) * ITEMS_PER_PAGE;
+        const res = await fetch(`${API_BASE_URL}/api/sensor?limit=${ITEMS_PER_PAGE}&skip=${skip}`, { cache: "no-store" });
         if (!res.ok) {
           throw new Error(`HTTP error! status: ${res.status}`);
         }
         const json = await res.json();
         if (json.success) {
           setReadings(json.data);
+          setTotalItems(json.total ?? json.data.length);
         } else {
           setError(json.error || "Gagal memuat data riwayat.");
         }
@@ -45,7 +50,7 @@ export default function HistoryPage() {
       }
     }
     fetchHistory();
-  }, []);
+  }, [currentPage]);
 
   const filteredReadings = readings.filter((r) => {
     const shortId = `LOG-${r.id.slice(0, 5).toUpperCase()}`;
@@ -179,14 +184,59 @@ export default function HistoryPage() {
         </div>
         
         {/* Pagination */}
-        <div className="flex justify-between items-center mt-6 text-sm text-slate-500">
-          <span>Menampilkan {filteredReadings.length} data terbaru</span>
-          <div className="flex gap-1">
-            <Button variant="outline" size="sm" className="glass rounded-full h-8 px-3 border-white/60" disabled>Prev</Button>
-            <Button variant="outline" size="sm" className="glass rounded-full h-8 px-3 border-white/60 bg-white/80">1</Button>
-            <Button variant="outline" size="sm" className="glass rounded-full h-8 px-3 border-white/60" disabled>Next</Button>
-          </div>
-        </div>
+        {(() => {
+          const totalPages = Math.max(1, Math.ceil(totalItems / ITEMS_PER_PAGE));
+          const startItem = totalItems === 0 ? 0 : (currentPage - 1) * ITEMS_PER_PAGE + 1;
+          const endItem = Math.min(currentPage * ITEMS_PER_PAGE, totalItems);
+
+          // Generate visible page numbers (max 5)
+          const pages: number[] = [];
+          let startPage = Math.max(1, currentPage - 2);
+          let endPage = Math.min(totalPages, startPage + 4);
+          if (endPage - startPage < 4) {
+            startPage = Math.max(1, endPage - 4);
+          }
+          for (let i = startPage; i <= endPage; i++) {
+            pages.push(i);
+          }
+
+          return (
+            <div className="flex justify-between items-center mt-6 text-sm text-slate-500">
+              <span>Menampilkan {startItem}–{endItem} dari {totalItems} data</span>
+              <div className="flex gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="glass rounded-full h-8 px-3 border-white/60"
+                  disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                >
+                  Prev
+                </Button>
+                {pages.map((p) => (
+                  <Button
+                    key={p}
+                    variant="outline"
+                    size="sm"
+                    className={`glass rounded-full h-8 px-3 border-white/60 ${p === currentPage ? 'bg-white/80 font-bold text-emerald-700' : ''}`}
+                    onClick={() => setCurrentPage(p)}
+                  >
+                    {p}
+                  </Button>
+                ))}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="glass rounded-full h-8 px-3 border-white/60"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     </div>
   );
