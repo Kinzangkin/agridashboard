@@ -391,7 +391,7 @@ export default function DashboardPage() {
             className="w-full h-full object-cover"
           />
         ) : cameraConflict ? (
-          <div className="absolute inset-0 w-full h-full bg-gradient-to-br from-slate-900 to-amber-950/80 flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-300">
+          <div className="absolute inset-0 w-full h-full bg-linear-to-br from-slate-900 to-amber-950/80 flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-300">
             <div className="w-14 h-14 bg-amber-500/10 rounded-full flex items-center justify-center border border-amber-500/20 mb-4 shadow-lg">
               <Camera className="text-amber-400" size={24} />
             </div>
@@ -442,7 +442,7 @@ export default function DashboardPage() {
           />
         ) : (
           // Premium glassmorphic emerald gradient standby placeholder
-          <div className="absolute inset-0 w-full h-full bg-gradient-to-br from-slate-900 to-emerald-950/80 flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-300">
+          <div className="absolute inset-0 w-full h-full bg-linear-to-br from-slate-900 to-emerald-950/80 flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-300">
             <div className="w-16 h-16 bg-white/10 rounded-full flex items-center justify-center border border-white/20 mb-4 shadow-lg animate-pulse">
               <Camera className="text-emerald-400" size={28} />
             </div>
