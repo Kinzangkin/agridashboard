@@ -38,14 +38,23 @@ function detectGreenLeaf(video: HTMLVideoElement, offscreenCanvas: HTMLCanvasEle
   const imgData = ctx.getImageData(0, 0, w, h);
   const data = imgData.data;
 
-  let minX = w;
-  let maxX = 0;
-  let minY = h;
-  let maxY = 0;
-  let greenPixelCount = 0;
+  // 1. Grid density counting
+  const blockSize = 8;
+  const cols = 20; // 160 / 8
+  const rows = 15; // 120 / 8
+  
+  // Create 2D grid arrays
+  const grid = Array.from({ length: rows }, () => new Int32Array(cols));
+  const activeGrid = Array.from({ length: rows }, () => new Uint8Array(cols));
 
   for (let y = 0; y < h; y++) {
+    const blockY = Math.floor(y / blockSize);
+    if (blockY >= rows) continue;
+    
     for (let x = 0; x < w; x++) {
+      const blockX = Math.floor(x / blockSize);
+      if (blockX >= cols) continue;
+
       const idx = (y * w + x) * 4;
       const r = data[idx];
       const g = data[idx + 1];
@@ -60,7 +69,6 @@ function detectGreenLeaf(video: HTMLVideoElement, offscreenCanvas: HTMLCanvasEle
       const cMin = Math.min(rP, gP, bP);
       const delta = cMax - cMin;
 
-      // Hue
       let hue = 0;
       if (delta !== 0) {
         if (cMax === rP) {
@@ -73,35 +81,139 @@ function detectGreenLeaf(video: HTMLVideoElement, offscreenCanvas: HTMLCanvasEle
       }
       if (hue < 0) hue += 360;
 
-      // OpenCV H scale is 0-179, so we divide hue by 2
+      // OpenCV H scale is 0-179
       const hOpenCV = hue / 2;
-
-      // Saturation
       const sOpenCV = cMax === 0 ? 0 : (delta / cMax) * 255;
-
-      // Value
       const vOpenCV = cMax * 255;
 
-      // Check green range: H in [25, 90], S > 40, V > 40
-      if (hOpenCV >= 25 && hOpenCV <= 90 && sOpenCV > 40 && vOpenCV > 40) {
-        greenPixelCount++;
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
+      // Green range: H in [25, 90], Saturation > 25, Value > 25
+      if (hOpenCV >= 25 && hOpenCV <= 90 && sOpenCV > 25 && vOpenCV > 25) {
+        grid[blockY][blockX]++;
       }
     }
   }
 
-  // Minimum 0.5% of pixels must be green
-  const minGreenPixels = 0.005 * w * h; // 0.5% of 19200 = 96 pixels
-  if (greenPixelCount > minGreenPixels) {
-    return {
-      x: minX / w,
-      y: minY / h,
-      w: (maxX - minX) / w,
-      h: (maxY - minY) / h
-    };
+  // 2. Mark active blocks (at least 6 green pixels in the 8x8 block)
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (grid[r][c] >= 6) {
+        activeGrid[r][c] = 1;
+      }
+    }
+  }
+
+  // 3. Find connected components of active blocks
+  const visited = Array.from({ length: rows }, () => new Uint8Array(cols));
+  let bestComponent: { r: number; c: number }[] = [];
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (activeGrid[r][c] === 1 && visited[r][c] === 0) {
+        const component: { r: number; c: number }[] = [];
+        const queue: [number, number][] = [[r, c]];
+        visited[r][c] = 1;
+
+        while (queue.length > 0) {
+          const [currR, currC] = queue.shift()!;
+          component.push({ r: currR, c: currC });
+
+          const neighbors = [
+            [currR - 1, currC],
+            [currR + 1, currC],
+            [currR, currC - 1],
+            [currR, currC + 1],
+          ];
+
+          for (const [nr, nc] of neighbors) {
+            if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+              if (activeGrid[nr][nc] === 1 && visited[nr][nc] === 0) {
+                visited[nr][nc] = 1;
+                queue.push([nr, nc]);
+              }
+            }
+          }
+        }
+
+        if (component.length > bestComponent.length) {
+          bestComponent = component;
+        }
+      }
+    }
+  }
+
+  // Minimum component size: 2 active blocks
+  if (bestComponent.length >= 2) {
+    let minCol = cols;
+    let maxCol = 0;
+    let minRow = rows;
+    let maxRow = 0;
+
+    for (const block of bestComponent) {
+      if (block.c < minCol) minCol = block.c;
+      if (block.c > maxCol) maxCol = block.c;
+      if (block.r < minRow) minRow = block.r;
+      if (block.r > maxRow) maxRow = block.r;
+    }
+
+    // Refine bounds inside this component
+    const startX = minCol * blockSize;
+    const endX = (maxCol + 1) * blockSize;
+    const startY = minRow * blockSize;
+    const endY = (maxRow + 1) * blockSize;
+
+    let compMinX = w;
+    let compMaxX = 0;
+    let compMinY = h;
+    let compMaxY = 0;
+
+    for (let y = startY; y < endY; y++) {
+      for (let x = startX; x < endX; x++) {
+        const idx = (y * w + x) * 4;
+        const r = data[idx];
+        const g = data[idx + 1];
+        const b = data[idx + 2];
+
+        const rP = r / 255;
+        const gP = g / 255;
+        const bP = b / 255;
+
+        const cMax = Math.max(rP, gP, bP);
+        const cMin = Math.min(rP, gP, bP);
+        const delta = cMax - cMin;
+
+        let hue = 0;
+        if (delta !== 0) {
+          if (cMax === rP) {
+            hue = 60 * (((gP - bP) / delta) % 6);
+          } else if (cMax === gP) {
+            hue = 60 * (((bP - rP) / delta) + 2);
+          } else if (cMax === bP) {
+            hue = 60 * (((rP - gP) / delta) + 4);
+          }
+        }
+        if (hue < 0) hue += 360;
+
+        const hOpenCV = hue / 2;
+        const sOpenCV = cMax === 0 ? 0 : (delta / cMax) * 255;
+        const vOpenCV = cMax * 255;
+
+        if (hOpenCV >= 25 && hOpenCV <= 90 && sOpenCV > 25 && vOpenCV > 25) {
+          if (x < compMinX) compMinX = x;
+          if (x > compMaxX) compMaxX = x;
+          if (y < compMinY) compMinY = y;
+          if (y > compMaxY) compMaxY = y;
+        }
+      }
+    }
+
+    if (compMaxX >= compMinX && compMaxY >= compMinY) {
+      return {
+        x: compMinX / w,
+        y: compMinY / h,
+        w: (compMaxX - compMinX) / w,
+        h: (compMaxY - compMinY) / h
+      };
+    }
   }
 
   return null;
